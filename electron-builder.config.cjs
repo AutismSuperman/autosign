@@ -25,7 +25,9 @@ module.exports = {
   },
   win: {
     target: ['nsis'],
-    icon: 'build/icon.ico'
+    icon: 'build/icon.ico',
+    // 文件名带上版本与平台：三个平台的产物混在同一个 Release 里时更好辨认
+    artifactName: '${productName}-${version}-${arch}-win.${ext}'
   },
   nsis: {
     oneClick: false,
@@ -37,11 +39,13 @@ module.exports = {
   mac: {
     target: ['dmg'],
     category: 'public.app-category.utilities',
-    icon: 'build/icon.icns'
+    icon: 'build/icon.icns',
+    artifactName: '${productName}-${version}-${arch}-mac.${ext}'
   },
   linux: {
     target: ['AppImage'],
     category: 'Utility',
-    icon: 'build/icon.png'
+    icon: 'build/icon.png',
+    artifactName: '${productName}-${version}-${arch}-linux.${ext}'
   }
 }

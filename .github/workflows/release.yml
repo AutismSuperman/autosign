@@ -111,6 +111,53 @@ jobs:
       - name: 打包并发布到 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           npm run build
-          npx electron-builder --config electron-builder.config.cjs --publish always
+          # 三个平台的 job 并发跑，同时 --publish always 会互相覆盖 release，
+          # 导致最终没有资产。这里只构建，统一由下面的发布 job 收集上传。
+          npx electron-builder --config electron-builder.config.cjs --publish never
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          # latest.yml / *.blockmap 也要带上：自动更新依赖它们判断版本
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.AppImage
+            dist/latest*.yml
+            dist/*.blockmap
+          if-no-files-found: error
+
+  publish:
+    name: 发布到 Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: dist-*
+          merge-multiple: true
+
+      - name: 列出产物
+        run: ls -la artifacts
+
+      - name: 创建 Release 并上传产物
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          # 预发布 tag（-beta / -rc）标记为 prerelease，避免成为默认更新源
+          prerelease=""
+          case "$tag" in
+            *-*) prerelease="--prerelease" ;;
+          esac
+          gh release create "$tag" \
+            --title "AutoSign $tag" \
+            --generate-notes \
+            $prerelease \
+            artifacts/* || \
+          gh release upload "$tag" artifacts/* --clobber
