@@ -813,9 +813,15 @@ input:focus-visible {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-right: 10px;
+  /* 与站点名分开一点，但不要推得太远：它在视觉上从属于标题 */
+  margin-left: 14px;
   font-size: 12px;
+  color: var(--text-dim);
   white-space: nowrap;
+}
+
+.site-totals b {
+  font-variant-numeric: tabular-nums;
 }
 
 /* 金额语义色：可用是收入（绿），累计是支出（红） */

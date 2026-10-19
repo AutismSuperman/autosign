@@ -15,7 +15,7 @@
     "test": "node tests/totp.test.mjs && node tests/session.test.mjs && node tests/relogin.test.mjs && node tests/checkin-reconcile.test.mjs && node tests/checkin-display.test.mjs && node tests/relogin-session.test.mjs && node tests/session-partition.test.mjs && node tests/api-keys.test.mjs && node tests/waf-detect.test.mjs && node tests/window-bounds.test.mjs && node tests/mask.test.mjs",
     "dist": "npm run build && electron-builder --config electron-builder.config.cjs --publish never",
     "dist:dir": "npm run build && electron-builder --config electron-builder.config.cjs --dir",
-    "verify:ui": "node scripts/verify-ui.mjs && node scripts/verify-batch-progress.mjs && node scripts/verify-window-state.mjs && node scripts/verify-search-filter.mjs && node scripts/verify-mask.mjs",
+    "verify:ui": "node scripts/verify-ui.mjs && node scripts/verify-batch-progress.mjs && node scripts/verify-window-state.mjs && node scripts/verify-search-filter.mjs && node scripts/verify-mask.mjs && node scripts/verify-site-totals.mjs",
     "test:net": "node tests/password-login.test.mjs",
     "check:secrets": "node scripts/check-secrets.mjs",
     "precommit": "npm run check:secrets",

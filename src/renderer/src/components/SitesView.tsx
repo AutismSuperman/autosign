@@ -91,9 +91,53 @@ interface Props {
   onToast: (message: string, kind?: ToastKind) => void
 }
 
+/**
+ * 站点合计金额。
+ *
+ * 只统计刷新成功、且有该字段的账号：失败账号的额度是上次的旧数据，
+ * 混进合计会让人以为整站真有这么多。一个可用数据都没有时不显示，
+ * 避免出现一个没有意义的 $0.00。
+ */
+function SiteTotals({ site }: { site: Site }): React.JSX.Element | null {
+  let available = 0
+  let used = 0
+  let hasAvailable = false
+  let hasUsed = false
+
+  for (const account of site.accounts) {
+    const status = account.lastStatus
+    if (!status?.ok) continue
+    if (status.available !== undefined) {
+      available += status.available
+      hasAvailable = true
+    }
+    if (status.used !== undefined) {
+      used += status.used
+      hasUsed = true
+    }
+  }
+
+  if (!hasAvailable && !hasUsed) return null
+
+  const count = site.accounts.filter((a) => a.lastStatus?.ok).length
+  return (
+    <span className="site-totals" title={`${count} 个账号刷新成功时的合计`}>
+      {hasAvailable && (
+        <span>
+          合计可用 <b className="amount ok">{money(available)}</b>
+        </span>
+      )}
+      {hasUsed && (
+        <span>
+          累计 <b className="amount used">{money(used)}</b>
+        </span>
+      )}
+    </span>
+  )
+}
+
 /** 站点卡片头像：有 logo 用 logo，否则用首字母。 */
-function SiteAvatar({ site }: { site: Site }): React.JSX.Element {
-  const icon = useSiteIcon(site.baseUrl)
+function SiteAvatar({ site }: { site: Site }): React.JSX.Element {  const icon = useSiteIcon(site.baseUrl)
   if (icon) {
     return (
       <span className="site-avatar has-logo">
@@ -449,6 +493,7 @@ export function SitesView(props: Props): React.JSX.Element {
                   {site.hidden && <span className="tag warn">已隐藏</span>}
                 </span>
               </span>
+              <SiteTotals site={site} />
               <span className="spacer" />
               <span className="site-actions">
                 <button
