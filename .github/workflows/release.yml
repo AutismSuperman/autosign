@@ -42,7 +42,7 @@ jobs:
 
       - name: 测试失败时保留输出
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: test-output
           path: test-output.log
@@ -71,7 +71,7 @@ jobs:
 
       - name: 界面验证失败时保留输出
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: verify-output
           path: verify-output.log
@@ -119,7 +119,7 @@ jobs:
           npx electron-builder --config electron-builder.config.cjs --publish never
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: dist-${{ matrix.os }}
           # latest.yml / *.blockmap 也要带上：自动更新依赖它们判断版本
@@ -139,7 +139,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts
 
@@ -147,51 +147,21 @@ jobs:
         run: |
           mkdir -p release
           find artifacts -type f -maxdepth 2 -exec cp -v {} release/ \;
+          echo '--- release/ ---'
           ls -la release
 
-      - name: 创建 Release 并上传产物
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          echo "target tag: $tag"
-          echo "gh version: $(gh --version | head -1)"
-          echo "auth: $(gh auth status 2>&1 | head -3)"
-          ls -la release
+      # 用社区维护的 action 而不是手写 gh 命令：它把 release 的创建/更新、
+      # 资产上传与重跑幂等性都处理好了，也支持 prerelease 判断。
+      - name: 上传到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: AutoSign ${{ github.ref_name }}
+          body: |
+            自动构建产物，详见 README 的「版本与发布」一节。
 
-          # 预发布 tag（-beta / -rc）标记为 prerelease，避免成为默认更新源
-          extra=()
-          case "$tag" in
-            *-*) extra+=(--prerelease) ;;
-          esac
-
-          # tag 已由 push 创建，因此直接用 --verify-tag 绑定；
-          # 已存在同名 release 时改为补传资产，保证可重复执行。
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "release 已存在，改为补传"
-          else
-            echo "创建 release..."
-            # 不用 --generate-notes：它需要额外的 pull-requests 读权限，
-            # 在只有 contents:write 的默认 token 下会失败
-            gh release create "$tag" \
-              --verify-tag \
-              --title "AutoSign $tag" \
-              --notes "自动构建产物，详见 README 的「版本与发布」一节。" \
-              "${extra[@]}"
-          fi
-
-          # 逐个上传，避免任一文件失败时整批中断后难以定位
-          shopt -s nullglob
-          files=(release/*)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "没有可上传的产物" >&2
-            exit 1
-          fi
-          for f in "${files[@]}"; do
-            echo "upload: $f ($(du -h "$f" | cut -f1))"
-            gh release upload "$tag" "$f" --clobber
-          done
-
-          echo "final assets:"
-          gh release view "$tag" --json assets --jq '.assets[].name'
+            - Windows：`*-win.exe`（NSIS 安装包，支持应用内自动更新）
+            - macOS：`*-mac.dmg`
+            - Linux：`*-linux.AppImage`
+          files: release/*
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
