@@ -21,6 +21,7 @@ import {
   Zap
 } from 'lucide-react'
 import type {
+  Account,
   AccountSort,
   ApiKey,
   PublicCredential,
@@ -169,15 +170,28 @@ export function SitesView(props: Props): React.JSX.Element {
     credentialId ? props.credentials.find((c) => c.id === credentialId) : undefined
 
   /**
-   * 检索：站点名、域名、账号名/备注、所属凭据的显示名称与用户名都参与匹配。
-   * 命中账号时保留整个站点卡片，用户能同时看到同站其它账号的上下文。
+   * 检索结果。
+   *
+   * 检索范围覆盖站点名、域名、账号名，以及账号所属凭据的显示名称、
+   * 用户名与备注。命中方式不同，展示范围也不同：
+   *   - 站点名或域名命中：展示该站点的全部账号（用户找的是站点，
+   *     看到整站账号才符合预期）；
+   *   - 只有账号名 / 凭据命中：只展示命中的那几个账号。
+   *
+   * 早期版本两种命中都保留整张卡片，于是搜邮箱时十几个账号照样全列，
+   * 看起来像筛选没生效。
    */
   const visibleSites = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return props.sites
-    return props.sites.filter((site) => {
-      if (site.name.toLowerCase().includes(q) || site.baseUrl.toLowerCase().includes(q)) return true
-      return site.accounts.some((account) => {
+    if (!q) return props.sites.map((site) => ({ site, accounts: site.accounts }))
+
+    const out: Array<{ site: Site; accounts: Account[] }> = []
+    for (const site of props.sites) {
+      if (site.name.toLowerCase().includes(q) || site.baseUrl.toLowerCase().includes(q)) {
+        out.push({ site, accounts: site.accounts })
+        continue
+      }
+      const accounts = site.accounts.filter((account) => {
         if (account.label.toLowerCase().includes(q)) return true
         const cred = credentialOf(account.credentialId)
         if (!cred) return false
@@ -187,7 +201,9 @@ export function SitesView(props: Props): React.JSX.Element {
           (cred.note ?? '').toLowerCase().includes(q)
         )
       })
-    })
+      if (accounts.length > 0) out.push({ site, accounts })
+    }
+    return out
   }, [props.sites, props.credentials, query])
 
   // 侧栏选中站点后，卡片换成了另一张，短暂高亮提示用户位置变了
@@ -279,7 +295,10 @@ export function SitesView(props: Props): React.JSX.Element {
       <h1>{scopeName ?? '站点'}</h1>
       <span className="sub">
         {query.trim()
-          ? `${visibleSites.length} / ${props.sites.length} 个站点`
+          ? (() => {
+              const accounts = visibleSites.reduce((n, v) => n + v.accounts.length, 0)
+              return `${visibleSites.length} / ${props.sites.length} 个站点 · ${accounts} 个账号`
+            })()
           : `${props.sites.length} 个站点 · ${totalAccounts} 个账号`}
       </span>
       <span className="spacer" />
@@ -384,7 +403,7 @@ export function SitesView(props: Props): React.JSX.Element {
             </button>
           </div>
         )}
-        {visibleSites.map((site) => (
+        {visibleSites.map(({ site, accounts }) => (
           <div
             className={siteCardClass(site)}
             id={`site-${site.id}`}
@@ -467,9 +486,9 @@ export function SitesView(props: Props): React.JSX.Element {
               </button>
             </div>
 
-            {site.accounts.length === 0 && <div className="hint">尚未登录账号。</div>}
+            {accounts.length === 0 && <div className="hint">尚未登录账号。</div>}
 
-            {site.accounts.length > 1 && (
+            {accounts.length > 1 && (
               <div className="account-sort-row">
                 <span className="account-sort-label">账号排序</span>
                 <span className="sort-control small">
@@ -511,7 +530,7 @@ export function SitesView(props: Props): React.JSX.Element {
               </div>
             )}
 
-            {sortSiteAccounts(site.accounts, props.accountSort, props.accountSortDir).map((account) => {
+            {sortSiteAccounts(accounts, props.accountSort, props.accountSortDir).map((account) => {
               const status = account.lastStatus
               const checked = account.lastCheckin
               const refreshing = props.busy.has(`status:${account.id}`)
