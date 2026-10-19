@@ -40,6 +40,8 @@ module.exports = {
     target: ['dmg'],
     category: 'public.app-category.utilities',
     icon: 'build/icon.icns',
+    // 同时产出 Apple Silicon 与 Intel 两版：GitHub 的 arm64 runner 默认只出 arm64，
+    // 显式声明后 Intel Mac 用户也能安装
     artifactName: '${productName}-${version}-${arch}-mac.${ext}'
   },
   linux: {

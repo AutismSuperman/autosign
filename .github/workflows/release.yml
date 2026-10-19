@@ -116,7 +116,13 @@ jobs:
           npm run build
           # 三个平台的 job 并发跑，同时 --publish always 会互相覆盖 release，
           # 导致最终没有资产。这里只构建，统一由下面的发布 job 收集上传。
-          npx electron-builder --config electron-builder.config.cjs --publish never
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            # macOS 同时出 Apple Silicon 与 Intel 两版
+            npx electron-builder --config electron-builder.config.cjs --publish never \
+              --mac --arm64 --x64
+          else
+            npx electron-builder --config electron-builder.config.cjs --publish never
+          fi
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v5
