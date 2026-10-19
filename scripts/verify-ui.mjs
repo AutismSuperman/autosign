@@ -91,12 +91,33 @@ ck('账号页有「添加凭据」按钮', (await ev(`[...document.querySelector
 ck('账号页只维护登录凭据，不再列出站点账号', (await ev(`[...document.querySelectorAll('.panel h2')].some(h=>h.textContent.includes('站点账号'))`)) === false)
 ck('未保存凭据时显示引导', (await ev(`document.querySelector('.content')?.innerText || ''`)).includes('还没有保存任何凭据'))
 ck('账号页有检索框', (await ev(`!!document.querySelector('.content .search-box input')`)) === true)
-ck('账号页有登录方式筛选', (await ev(`document.querySelectorAll('.log-toolbar select').length`)) === 2, `${await ev(`document.querySelectorAll('.log-toolbar select').length`)} 个`)
-ck(
-  '登录方式筛选含三种方式',
-  (await ev(`[...document.querySelectorAll('.log-toolbar select')][0]?.innerText || ''`)).includes('GitHub'),
-  await ev(`document.querySelectorAll('.log-toolbar select')[0]?.innerText.replace(/\\n/g,'|') || ''`)
-)
+ck('账号页有登录方式筛选', (await ev(`document.querySelectorAll('.log-toolbar .zselect').length`)) === 2, `${await ev(`document.querySelectorAll('.log-toolbar .zselect').length`)} 个`)
+// 自绘下拉：点开后菜单挂在 body 上，选项文案应包含三种登录方式
+await ev(`document.querySelectorAll('.log-toolbar .zselect')[0]?.click()`)
+await sleep(300)
+ck('登录方式筛选含三种方式', (await ev(`document.querySelector('.zselect-menu')?.innerText || ''`)).includes('GitHub'), await ev(`(document.querySelector('.zselect-menu')?.innerText || '').replace(/\\n/g,'|')`))
+ck('下拉菜单不遮挡触发器的位置计算正常', (await ev(`(() => {
+  const t = document.querySelectorAll('.log-toolbar .zselect')[0].getBoundingClientRect()
+  const m = document.querySelector('.zselect-menu').getBoundingClientRect()
+  return m.top >= t.bottom && Math.abs(m.left - t.left) < 2
+})()`)) === true)
+ck('下拉菜单沿用暗色主题背景', (await ev(`getComputedStyle(document.querySelector('.zselect-menu')).backgroundColor`)) === 'rgb(21, 25, 34)', await ev(`getComputedStyle(document.querySelector('.zselect-menu')).backgroundColor`))
+// 选中「GitHub」后收起，触发器显示所选值
+await ev(`[...document.querySelectorAll('.zselect-option')].find(o=>o.textContent.includes('GitHub'))?.click()`)
+await sleep(400)
+ck('选中后菜单收起', (await ev(`document.querySelectorAll('.zselect-menu').length`)) === 0)
+ck('触发器显示所选值', (await ev(`document.querySelectorAll('.log-toolbar .zselect')[0]?.innerText || ''`)).includes('GitHub'), await ev(`document.querySelectorAll('.log-toolbar .zselect')[0]?.innerText || ''`))
+await ev(`document.querySelectorAll('.log-toolbar .zselect')[0]?.click()`)
+await sleep(250)
+await ev(`[...document.querySelectorAll('.zselect-option')].find(o=>o.textContent.includes('全部方式'))?.click()`)
+await sleep(300)
+// Esc 只收起下拉，不应冒泡去关闭外层对话框
+await ev(`document.querySelectorAll('.log-toolbar .zselect')[0]?.click()`)
+await sleep(250)
+await ev(`document.querySelector('.zselect')?.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`)
+await sleep(250)
+ck('Esc 收起下拉', (await ev(`document.querySelectorAll('.zselect-menu').length`)) === 0)
+ck('Esc 后仍在账号页', (await ev(`document.querySelector('.topbar h1')?.textContent`)) === '账号')
 
 // 凭据对话框
 await ev(`[...document.querySelectorAll('.btn')].find(b=>b.textContent.includes('添加凭据'))?.click()`)
@@ -285,6 +306,20 @@ ck('无 detail 的日志默认不显示详情段', hasDetailText === 0, `${hasDe
 await ev(`[...document.querySelectorAll('.nav-item')].find(n=>n.innerText.includes('设置'))?.click()`)
 await sleep(700)
 ck('设置页有主题分段选择器', (await ev(`[...document.querySelectorAll('.seg-item')].filter(b=>/暗色|亮色|跟随系统/.test(b.textContent)).length`)) === 3)
+// 代理模式：自绘下拉，默认值为「跟随系统」
+ck('设置页代理模式为自绘下拉', (await ev(`document.querySelectorAll('.content .zselect').length`)) === 1)
+ck(
+  '设置页代理模式默认显示跟随系统',
+  (await ev(`document.querySelector('.content .zselect')?.innerText || ''`)).includes('跟随系统'),
+  await ev(`document.querySelector('.content .zselect')?.innerText || ''`)
+)
+await ev(`document.querySelector('.content .zselect')?.click()`)
+await sleep(300)
+const proxyOptions = await ev(`(document.querySelector('.zselect-menu')?.innerText || '').replace(/\\n/g,'|')`)
+ck('代理模式含三种选项', ['跟随系统', '手动指定', '直连'].every((t) => proxyOptions.includes(t)), proxyOptions)
+await ev(`[...document.querySelectorAll('.zselect-option')].find(o=>o.textContent.includes('直连'))?.click()`)
+await sleep(400)
+ck('切换到直连后菜单收起', (await ev(`document.querySelectorAll('.zselect-menu').length`)) === 0)
 ck('设置页说明关窗最小化到托盘', (await ev(`document.querySelector('.content')?.innerText || ''`)).includes('托盘'))
 
 // 切换到亮色主题，验证 <html data-theme> 与 token 生效

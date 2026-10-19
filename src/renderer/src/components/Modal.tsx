@@ -25,7 +25,7 @@ export function Modal(props: Props): React.JSX.Element {
     const root = ref.current
     if (!root) return
     const field = root.querySelector<HTMLElement>(
-      'input:not([type=hidden]), select, textarea'
+      'input:not([type=hidden]), select, textarea, .zselect'
     )
     // 没有输入框时聚焦容器本身，保证 Esc 等按键能被对话框收到
     if (field) field.focus()

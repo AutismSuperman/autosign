@@ -11,6 +11,8 @@ import {
   Sun
 } from 'lucide-react'
 import type { ProxyProbeResult, Settings, ThemeMode } from '@shared/types'
+import { Select } from './Select'
+import type { SelectOption } from './Select'
 import type { ToastKind } from './Toast'
 
 interface Props {
@@ -18,6 +20,14 @@ interface Props {
   onChange: (patch: Partial<Settings>) => Promise<void>
   onToast: (message: string, kind?: ToastKind) => void
 }
+
+type ProxyMode = Settings['proxy']['mode']
+
+const PROXY_MODES: ReadonlyArray<SelectOption<ProxyMode>> = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'manual', label: '手动指定' },
+  { value: 'direct', label: '直连（不使用代理）' }
+]
 
 const THEME_OPTIONS: Array<{ key: ThemeMode; label: string; icon: typeof Moon }> = [
   { key: 'dark', label: '暗色', icon: Moon },
@@ -72,18 +82,17 @@ export function SettingsView(props: Props): React.JSX.Element {
           <div className="field">
             <div className="field-label">代理模式</div>
             <div className="field-body">
-              <select
+              <Select
                 value={settings.proxy.mode}
-                onChange={(e) =>
+                options={PROXY_MODES}
+                onChange={(mode) =>
                   void props.onChange({
-                    proxy: { ...settings.proxy, mode: e.target.value as Settings['proxy']['mode'] }
+                    proxy: { ...settings.proxy, mode }
                   })
                 }
-              >
-                <option value="system">跟随系统</option>
-                <option value="manual">手动指定</option>
-                <option value="direct">直连（不使用代理）</option>
-              </select>
+                ariaLabel="代理模式"
+                minWidth={180}
+              />
               <span className="field-hint">
                 部分网络环境下目标站点直连会被重置，此时需要代理。跟随系统会读取 Windows
                 注册表 / macOS scutil / 环境变量。

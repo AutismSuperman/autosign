@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Copy, KeyRound, Pencil, Plus, Search, ShieldCheck, Trash2 } from 'lucide-react'
 import type { AuthProvider, PublicCredential } from '@shared/types'
 import { Modal } from './Modal'
+import { Select } from './Select'
 import { useConfirm } from './ConfirmDialog'
 import type { ToastKind } from './Toast'
 import { copyText } from '../lib/clipboard'
@@ -219,30 +220,20 @@ export function CredentialsView({ onToast, onChanged }: Props): React.JSX.Elemen
               aria-label="检索凭据"
             />
           </div>
-          <select
+          <Select
             value={providerFilter}
-            onChange={(e) => setProviderFilter(e.target.value as ProviderFilter)}
+            options={PROVIDER_FILTERS.map((f) => ({ value: f.key, label: f.label }))}
+            onChange={setProviderFilter}
             title="按登录方式筛选"
-            aria-label="按登录方式筛选"
-          >
-            {PROVIDER_FILTERS.map((f) => (
-              <option key={f.key} value={f.key}>
-                {f.label}
-              </option>
-            ))}
-          </select>
-          <select
+            ariaLabel="按登录方式筛选"
+          />
+          <Select
             value={featureFilter}
-            onChange={(e) => setFeatureFilter(e.target.value as FeatureFilter)}
+            options={FEATURE_FILTERS.map((f) => ({ value: f.key, label: f.label }))}
+            onChange={setFeatureFilter}
             title="按已保存的登录要素筛选"
-            aria-label="按登录要素筛选"
-          >
-            {FEATURE_FILTERS.map((f) => (
-              <option key={f.key} value={f.key}>
-                {f.label}
-              </option>
-            ))}
-          </select>
+            ariaLabel="按登录要素筛选"
+          />
           {hasFilter && (
             <span className="stat">
               {filtered.length} / {list.length}

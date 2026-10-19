@@ -117,8 +117,7 @@ button:disabled {
   opacity: 0.45;
 }
 
-input,
-select {
+input {
   font-family: inherit;
   font-size: inherit;
   color: var(--text);
@@ -130,8 +129,7 @@ select {
   transition: border-color 0.12s ease;
 }
 
-input:focus,
-select:focus {
+input:focus {
   border-color: var(--accent-dim);
 }
 
@@ -141,8 +139,7 @@ select:focus {
 }
 
 /* 输入框的聚焦态由边框颜色表达，不再叠加外圈描边 */
-input:focus-visible,
-select:focus-visible {
+input:focus-visible {
   outline: none;
 }
 
@@ -759,12 +756,6 @@ select:focus-visible {
   color: var(--text-faint);
 }
 
-.sort-control.small select {
-  padding: 3px 6px;
-  font-size: 11.5px;
-  border-radius: 7px;
-}
-
 .sort-control.small .icon-btn {
   width: 24px;
   height: 24px;
@@ -834,25 +825,10 @@ select:focus-visible {
   font-weight: 500;
 }
 
-/* 排序控件 */
 .sort-control {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-}
-
-.sort-control select {
-  padding: 6px 8px;
-  border-radius: 8px;
-  font-size: 12.5px;
-  color: var(--text-dim);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-}
-
-.sort-control select:hover {
-  color: var(--text);
-  border-color: var(--border-strong);
 }
 
 .account-row {
@@ -1355,6 +1331,169 @@ select:focus-visible {
 .modal-select {
   width: 100%;
   margin-bottom: 14px;
+}
+
+/* ============ 自绘下拉 ============ */
+
+.zselect {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 132px;
+  padding: 7px 10px 7px 11px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-align: left;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.zselect:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.zselect.open,
+.zselect:focus-visible {
+  border-color: var(--accent-dim);
+  outline: none;
+}
+
+.zselect:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.zselect-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zselect-chevron {
+  flex: none;
+  color: var(--text-faint);
+  transition: transform 0.16s ease, color 0.12s ease;
+}
+
+.zselect.open .zselect-chevron {
+  transform: rotate(180deg);
+  color: var(--text-dim);
+}
+
+.zselect-sm {
+  gap: 6px;
+  min-width: 96px;
+  padding: 4px 7px 4px 8px;
+  font-size: 11.5px;
+  border-radius: 7px;
+  color: var(--text-dim);
+}
+
+.zselect-sm:hover:not(:disabled) {
+  color: var(--text);
+}
+
+/* 菜单挂在 body 上，用 fixed 定位贴住触发器 */
+.zselect-menu {
+  position: fixed;
+  z-index: 90;
+  max-height: 288px;
+  overflow-y: auto;
+  padding: 5px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  animation: zselect-in 0.12s ease;
+}
+
+.zselect-menu.above {
+  animation-name: zselect-in-up;
+}
+
+.zselect-menu::-webkit-scrollbar {
+  width: 8px;
+}
+
+.zselect-menu::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: 4px;
+}
+
+.zselect-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: left;
+  white-space: nowrap;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.zselect-menu-sm .zselect-option {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.zselect-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.zselect-option.is-active {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.zselect-option.is-selected {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.zselect-option.is-selected.is-active {
+  background: var(--accent-soft);
+}
+
+.zselect-check {
+  flex: none;
+  color: var(--accent);
+}
+
+@keyframes zselect-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes zselect-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .modal-actions {

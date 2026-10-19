@@ -30,6 +30,7 @@ import type {
 } from '@shared/types'
 import { useConfirm } from './ConfirmDialog'
 import { EditSiteDialog } from './EditSiteDialog'
+import { Select } from './Select'
 import type { ToastKind } from './Toast'
 import { copyText } from '../lib/clipboard'
 import {
@@ -466,18 +467,17 @@ export function SitesView(props: Props): React.JSX.Element {
               <div className="account-sort-row">
                 <span className="account-sort-label">账号排序</span>
                 <span className="sort-control small">
-                  <select
+                  <Select
                     value={props.accountSort}
-                    onChange={(e) => changeAccountSort(e.target.value as AccountSort)}
+                    options={(Object.keys(ACCOUNT_SORT_LABEL) as AccountSort[]).map((key) => ({
+                      value: key,
+                      label: ACCOUNT_SORT_LABEL[key]
+                    }))}
+                    onChange={changeAccountSort}
+                    size="sm"
                     title="账号排序方式"
-                    aria-label="账号排序方式"
-                  >
-                    {(Object.keys(ACCOUNT_SORT_LABEL) as AccountSort[]).map((key) => (
-                      <option key={key} value={key}>
-                        {ACCOUNT_SORT_LABEL[key]}
-                      </option>
-                    ))}
-                  </select>
+                    ariaLabel="账号排序方式"
+                  />
                   <button
                     className="icon-btn tiny"
                     onClick={() =>
