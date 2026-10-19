@@ -29,7 +29,7 @@ function CatalogAvatar({ name, baseUrl }: { name: string; baseUrl: string }): Re
 /**
  * 添加站点。
  *
- * 内置站点以卡片网格呈现：一眼能看到站点名、登录方式、签到方式与奖励，
+ * 内置站点以卡片网格呈现：一眼能看到站点名、域名、登录方式与签到方式，
  * 点卡片即选中（双击直接添加），自定义站点保留表单，
  * 添加时会读 /api/status 自动识别协议形态。
  */
@@ -131,7 +131,6 @@ export function AddSiteDialog(props: Props): React.JSX.Element {
                     <span className="tag">{MODE_LABEL[c.mode]}</span>
                     <span className="tag">{providerLabel(c.provider)}</span>
                   </div>
-                  <div className="catalog-reward">{c.reward}</div>
                 </button>
               ))}
             </div>

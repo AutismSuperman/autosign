@@ -68,7 +68,6 @@ export interface CatalogEntry {
   baseUrl: string
   affUrl: string
   mode: CheckinMode
-  reward: string
   note: string
   provider: AuthProvider
   providers: AuthProvider[]
