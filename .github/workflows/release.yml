@@ -156,6 +156,8 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           echo "target tag: $tag"
+          echo "gh version: $(gh --version | head -1)"
+          echo "auth: $(gh auth status 2>&1 | head -3)"
           ls -la release
 
           # 预发布 tag（-beta / -rc）标记为 prerelease，避免成为默认更新源
@@ -169,10 +171,13 @@ jobs:
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "release 已存在，改为补传"
           else
+            echo "创建 release..."
+            # 不用 --generate-notes：它需要额外的 pull-requests 读权限，
+            # 在只有 contents:write 的默认 token 下会失败
             gh release create "$tag" \
               --verify-tag \
               --title "AutoSign $tag" \
-              --generate-notes \
+              --notes "自动构建产物，详见 README 的「版本与发布」一节。" \
               "${extra[@]}"
           fi
 
@@ -184,8 +189,9 @@ jobs:
             exit 1
           fi
           for f in "${files[@]}"; do
-            echo "upload: $f"
+            echo "upload: $f ($(du -h "$f" | cut -f1))"
             gh release upload "$tag" "$f" --clobber
           done
 
+          echo "final assets:"
           gh release view "$tag" --json assets --jq '.assets[].name'
