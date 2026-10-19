@@ -50,13 +50,26 @@ jobs:
       - name: 构建
         run: npm run build
 
-      - name: 界面验证
+      # Electron 在无显示服务器的 Linux 上需要 xvfb。
+      # 系统依赖（libgtk / libnss 等）由 Electron 自带的最小集覆盖不全，
+      # 因此这里显式安装运行库，否则窗口起不来、验证会以「渲染进程未启动」失败。
+      - name: 安装 Electron 运行库
         run: |
-          if [ -n "$DISPLAY" ]; then
-            npm run verify:ui
-          else
-            xvfb-run --auto-servernum npm run verify:ui
-          fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+            libgbm1 libasound2t64 libxcomposite1 libxdamage1 libxfixes3 \
+            libxkbcommon0 libxrandr2 libpango-1.0-0 libcairo2
+
+      - name: 界面验证
+        run: xvfb-run --auto-servernum npm run verify:ui 2>&1 | tee verify-output.log
+
+      - name: 界面验证失败时保留输出
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-output
+          path: verify-output.log
 
   build:
     name: 打包 ${{ matrix.os }}
