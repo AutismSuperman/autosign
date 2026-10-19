@@ -1,0 +1,89 @@
+name: Release
+
+# 只在「里程碑」——即打正式版本 tag 时构建并发布。
+# 预发布 tag（含 -beta / -rc）走下面的分支，产物标记为 prerelease，
+# 不会成为 electron-updater 的默认更新源。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: 验证
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: 敏感信息扫描
+        run: node scripts/check-secrets.mjs --all
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 单元测试
+        run: npm test
+
+      - name: 构建
+        run: npm run build
+
+      - name: 界面验证
+        run: |
+          if [ -n "$DISPLAY" ]; then
+            npm run verify:ui
+          else
+            xvfb-run --auto-servernum npm run verify:ui
+          fi
+
+  build:
+    name: 打包 ${{ matrix.os }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+          - os: macos-latest
+          - os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # electron-builder 从 tag 推导版本号，避免与 package.json 不一致
+      - name: 校验版本号与 tag 一致
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag $GITHUB_REF_NAME 与 package.json 的 $pkg 不一致" >&2
+            exit 1
+          fi
+
+      - name: 打包并发布到 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm run build
+          npx electron-builder --config electron-builder.config.cjs --publish always

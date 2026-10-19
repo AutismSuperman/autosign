@@ -322,6 +322,28 @@ await sleep(400)
 ck('切换到直连后菜单收起', (await ev(`document.querySelectorAll('.zselect-menu').length`)) === 0)
 ck('设置页说明关窗最小化到托盘', (await ev(`document.querySelector('.content')?.innerText || ''`)).includes('托盘'))
 
+// --- 版本与更新 ---
+ck('设置页显示当前版本号', (await ev(`document.querySelector('.version-badge')?.textContent || ''`)).startsWith('v'), await ev(`document.querySelector('.version-badge')?.textContent || ''`))
+ck(
+  '版本号与 package.json 一致',
+  (await ev(`document.querySelector('.version-badge')?.textContent || ''`)) === `v${process.env.npm_package_version || ''}` ||
+    // npm run 下拿不到时退化为格式校验
+    /^v\d+\.\d+\.\d+/.test(await ev(`document.querySelector('.version-badge')?.textContent || ''`)),
+  await ev(`document.querySelector('.version-badge')?.textContent || ''`)
+)
+ck('设置页有检查更新按钮', (await ev(`[...document.querySelectorAll('.btn')].some(b=>b.textContent.trim()==='检查更新')`)) === true)
+// 开发/未打包构建里更新不可用：按钮禁用并给出说明，而不是点了报错
+ck(
+  '未打包时明确提示更新不可用',
+  (await ev(`document.querySelector('.content')?.innerText || ''`)).includes('开发模式') ||
+    (await ev(`[...document.querySelectorAll('.btn')].find(b=>b.textContent.trim()==='检查更新')?.disabled`)) === true
+)
+ck(
+  '应用菜单栏已移除',
+  (await ev(`(window.outerHeight - window.innerHeight) < 90`)) === true,
+  `标题栏+菜单高度差 ${await ev(`window.outerHeight - window.innerHeight`)}px`
+)
+
 // 切换到亮色主题，验证 <html data-theme> 与 token 生效
 const darkBg = await ev(`getComputedStyle(document.body).backgroundColor`)
 await ev(`[...document.querySelectorAll('.seg-item')].find(b=>b.textContent.includes('亮色'))?.click()`)

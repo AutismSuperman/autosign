@@ -10,10 +10,12 @@ dist/
 .shot-ui/
 .shot-ui-data/
 
-# 截图与临时调试脚本（应用图标除外）
+# 截图与临时调试脚本（应用图标与 README 截图除外）
 *.png
 !build/icon.png
 !resources/icon.png
+# README 用的界面截图，全部由演示数据生成
+!docs/images/*.png
 .shot.mjs
 .tmp/
 *.log

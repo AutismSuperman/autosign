@@ -1346,6 +1346,43 @@ input:focus-visible {
   margin-bottom: 14px;
 }
 
+/* ============ 版本与更新 ============ */
+
+.version-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.update-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+}
+
+.update-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-active);
+  overflow: hidden;
+}
+
+.update-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
 /* ============ 账号打码遮罩 ============ */
 
 /* 开启打码后用来替代账号文本：一块灰条，不渲染任何原始字符 */

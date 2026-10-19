@@ -55,6 +55,23 @@ export interface TurnstileProbeResult {
   error?: string
 }
 
+/** 自动更新状态。渲染进程只读，不参与决策。 */
+export type UpdateStatus =
+  | { state: 'idle' }
+  | { state: 'checking' }
+  | { state: 'available'; version: string }
+  | { state: 'none' }
+  | { state: 'downloading'; percent: number; transferred: number; total: number }
+  | { state: 'ready'; version: string }
+  | { state: 'error'; message: string }
+
+export interface AppInfo {
+  version: string
+  /** 开发模式或未打包时为 false，设置页据此提示更新不可用。 */
+  updaterAvailable: boolean
+  platform: string
+}
+
 export const IPC = {
   configGet: 'config:get',
   settingsUpdate: 'settings:update',
@@ -81,8 +98,14 @@ export const IPC = {
   turnstileProbe: 'turnstile:probe',
   openExternal: 'app:openExternal',
   secureInfo: 'app:secureInfo',
+  appInfo: 'app:info',
+  updateCheck: 'update:check',
+  updateStatus: 'update:status',
+  updateInstall: 'update:install',
   /** 主进程 → 渲染进程：配置发生变化，渲染端应重新拉取。 */
-  configChanged: 'config:changed'
+  configChanged: 'config:changed',
+  /** 主进程 → 渲染进程：自动更新状态变化。 */
+  updateChanged: 'update:changed'
 } as const
 
 export interface ZcodeApi {
@@ -151,8 +174,19 @@ export interface ZcodeApi {
   app: {
     openExternal(url: string): Promise<void>
     secureInfo(): Promise<{ encryptionAvailable: boolean; platform: string }>
+    /** 版本号与更新可用性。版本号唯一来源是 package.json，由主进程读取。 */
+    info(): Promise<AppInfo>
     /** 订阅配置变更（后台任务改动了账号状态时，界面需要跟上）。返回取消订阅函数。 */
     onConfigChanged(listener: () => void): () => void
+  }
+  update: {
+    /** 手动检查更新；下载完成后会询问是否立即重启。 */
+    check(): Promise<UpdateStatus>
+    current(): Promise<UpdateStatus>
+    /** 重启并安装已下载的更新。 */
+    install(): Promise<void>
+    /** 订阅更新状态变化。返回取消订阅函数。 */
+    onChange(listener: (status: UpdateStatus) => void): () => void
   }
 }
 

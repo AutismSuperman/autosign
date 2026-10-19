@@ -46,6 +46,15 @@ import type { SessionDeps } from './sites/session'
 import { randomUUID } from 'node:crypto'
 import { sanitizeWindowBounds } from './windowBounds'
 import { WindowStateStore } from './windowState'
+import {
+  appVersion,
+  checkForUpdates,
+  getUpdateStatus,
+  initUpdater,
+  onUpdateStatus,
+  quitAndInstall,
+  updaterAvailable
+} from './updater'
 
 /**
  * 必须在读取任何 app 路径之前设置应用名。
@@ -1104,6 +1113,20 @@ function registerIpc(): void {
     encryptionAvailable: ConfigStore.encryptionAvailable(),
     platform: process.platform
   }))
+
+  // 版本号来源是 package.json：打包后 app.getVersion() 读到的就是它，
+  // 开发模式下由构建注入（见 electron.vite.config.ts）
+  ipcMain.handle(IPC.appInfo, () => ({
+    version: appVersion(),
+    updaterAvailable: updaterAvailable(),
+    platform: process.platform
+  }))
+
+  ipcMain.handle(IPC.updateStatus, () => getUpdateStatus())
+  ipcMain.handle(IPC.updateCheck, () => checkForUpdates(true))
+  ipcMain.handle(IPC.updateInstall, () => {
+    quitAndInstall()
+  })
 }
 
 /** 后台定时签到：由主进程内的 setTimeout 链驱动，不依赖任何窗口。 */
@@ -1208,6 +1231,11 @@ async function createWindow(): Promise<void> {
     minHeight: 640
   })
 
+  // 移除 Electron 默认菜单（File / Edit / View / Window）。
+  // 这个应用的交互都在自绘界面里，原生菜单既用不到、又会在标题栏下方
+  // 多出一条与整体风格不一致的条纹。
+  Menu.setApplicationMenu(null)
+
   mainWindow = new BrowserWindow({
     x: bounds.x,
     y: bounds.y,
@@ -1291,6 +1319,13 @@ app.whenReady().then(async () => {
   await createWindow()
   createTray()
   scheduleNext()
+  // 更新状态变化时推给所有窗口（渲染进程只负责展示）
+  onUpdateStatus((status) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(IPC.updateChanged, status)
+    }
+  })
+  initUpdater()
   // 主动续期快过期的令牌：避免每次业务请求先吃一个 401 再去续期
   startKeepAlive({
     proxy: () => currentProxy(),

@@ -2,14 +2,18 @@ import { useEffect, useState } from 'react'
 import {
   Activity,
   CalendarClock,
+  HardDriveDownload,
   Minimize2,
   Monitor,
   Moon,
   Network,
   Palette,
+  RefreshCw,
+  RotateCw,
   ShieldCheck,
   Sun
 } from 'lucide-react'
+import type { AppInfo, UpdateStatus } from '@shared/ipc'
 import type { ProxyProbeResult, Settings, ThemeMode } from '@shared/types'
 import { Select } from './Select'
 import type { SelectOption } from './Select'
@@ -35,7 +39,7 @@ const THEME_OPTIONS: Array<{ key: ThemeMode; label: string; icon: typeof Moon }>
   { key: 'system', label: '跟随系统', icon: Monitor }
 ]
 
-/** 设置页：代理、定时签到、界面与安全。 */
+/** 设置页：代理、定时签到、界面、安全与版本。 */
 export function SettingsView(props: Props): React.JSX.Element {
   const { settings } = props
   const [proxyUrl, setProxyUrl] = useState(settings.proxy.url)
@@ -44,9 +48,14 @@ export function SettingsView(props: Props): React.JSX.Element {
   const [secure, setSecure] = useState<{ encryptionAvailable: boolean; platform: string } | null>(
     null
   )
+  const [info, setInfo] = useState<AppInfo | null>(null)
+  const [update, setUpdate] = useState<UpdateStatus>({ state: 'idle' })
 
   useEffect(() => {
     void window.api.app.secureInfo().then(setSecure)
+    void window.api.app.info().then(setInfo)
+    void window.api.update.current().then(setUpdate)
+    return window.api.update.onChange(setUpdate)
   }, [])
 
   const runProbe = async (): Promise<void> => {
@@ -267,8 +276,8 @@ export function SettingsView(props: Props): React.JSX.Element {
                 隐藏账号与邮箱
               </label>
               <span className="field-hint">
-                开启后账号名、登录账号与凭据用户名只显示首尾字符，
-                日志里的账号标识同样会被遮住，方便截图分享。站点名不受影响。
+                开启后账号名、登录账号与凭据用户名会替换成灰色遮罩块，
+                日志里的账号标识同样被遮住，方便截图分享。站点名不受影响。
               </span>
             </div>
           </div>
@@ -308,7 +317,103 @@ export function SettingsView(props: Props): React.JSX.Element {
             </div>
           </div>
         </div>
+
+        <div className="panel">
+          <h2>
+            <HardDriveDownload size={15} />
+            版本与更新
+          </h2>
+          <div className="field">
+            <div className="field-label">当前版本</div>
+            <div className="field-body">
+              <span className="version-badge">v{info?.version ?? '—'}</span>
+              <span className="field-hint">
+                {info && !info.updaterAvailable
+                  ? '开发模式构建，不支持应用内更新；安装版会在后台自动检查。'
+                  : '应用启动后会在后台检查更新，下载完成后退出时自动安装。'}
+              </span>
+            </div>
+          </div>
+          <div className="field">
+            <div className="field-label">检查更新</div>
+            <div className="field-body">
+              <button
+                className="btn small"
+                onClick={() => void window.api.update.check()}
+                disabled={
+                  !!info && !info.updaterAvailable
+                    ? true
+                    : update.state === 'checking' || update.state === 'downloading'
+                }
+                title={
+                  info && !info.updaterAvailable ? '开发模式不支持应用内更新' : '检查是否有新版本'
+                }
+              >
+                <RefreshCw
+                  size={13}
+                  className={
+                    update.state === 'checking' || update.state === 'downloading'
+                      ? 'rotating'
+                      : undefined
+                  }
+                />
+                {update.state === 'checking' ? '检查中…' : '检查更新'}
+              </button>
+              <UpdateStatusText status={update} onInstall={() => void window.api.update.install()} />
+            </div>
+          </div>
+        </div>
       </div>
     </>
   )
+}
+
+/**
+ * 更新状态的一句话说明 + 就绪后的安装按钮。
+ *
+ * 状态本身在主进程维护，这里只负责翻译成用户能读懂的话，
+ * 不重复维护「是否在下载」之类的判断。
+ */
+function UpdateStatusText({
+  status,
+  onInstall
+}: {
+  status: UpdateStatus
+  onInstall: () => void
+}): React.JSX.Element | null {
+  switch (status.state) {
+    case 'idle':
+      return null
+    case 'checking':
+      return <span className="tag">正在检查…</span>
+    case 'none':
+      return <span className="tag ok">已是最新</span>
+    case 'available':
+      return <span className="tag accent">发现 v{status.version}，正在下载</span>
+    case 'downloading':
+      return (
+        <span className="update-progress">
+          <span className="update-track">
+            <span className="update-fill" style={{ width: `${status.percent}%` }} />
+          </span>
+          <span className="stat tabular">{Math.round(status.percent)}%</span>
+        </span>
+      )
+    case 'ready':
+      return (
+        <>
+          <span className="tag ok">v{status.version} 已下载</span>
+          <button className="btn small primary" onClick={onInstall}>
+            <RotateCw size={13} />
+            重启安装
+          </button>
+        </>
+      )
+    case 'error':
+      return (
+        <span className="tag err" title={status.message}>
+          {status.message.length > 34 ? `${status.message.slice(0, 34)}…` : status.message}
+        </span>
+      )
+  }
 }

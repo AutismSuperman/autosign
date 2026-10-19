@@ -47,10 +47,21 @@ const api: ZcodeApi = {
   app: {
     openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url),
     secureInfo: () => ipcRenderer.invoke(IPC.secureInfo),
+    info: () => ipcRenderer.invoke(IPC.appInfo),
     onConfigChanged: (listener: () => void) => {
       const handler = (): void => listener()
       ipcRenderer.on(IPC.configChanged, handler)
       return () => ipcRenderer.removeListener(IPC.configChanged, handler)
+    }
+  },
+  update: {
+    check: () => ipcRenderer.invoke(IPC.updateCheck, true),
+    current: () => ipcRenderer.invoke(IPC.updateStatus),
+    install: () => ipcRenderer.invoke(IPC.updateInstall),
+    onChange: (listener) => {
+      const handler = (_e: unknown, status: Parameters<typeof listener>[0]): void => listener(status)
+      ipcRenderer.on(IPC.updateChanged, handler)
+      return () => ipcRenderer.removeListener(IPC.updateChanged, handler)
     }
   }
 }
