@@ -40,8 +40,19 @@ module.exports = {
     target: ['dmg'],
     category: 'public.app-category.utilities',
     icon: 'build/icon.icns',
-    // 同时产出 Apple Silicon 与 Intel 两版：GitHub 的 arm64 runner 默认只出 arm64，
-    // 显式声明后 Intel Mac 用户也能安装
+    // identity: '-' 表示 ad-hoc 签名。
+    //
+    // 没有 Apple Developer 证书时，electron-builder 默认完全不签名；
+    // 而 Apple Silicon 上的 Gatekeeper 会把「未签名」的 app 直接判为
+    // 「已损坏，应移到废纸篓」。ad-hoc 签名不证明开发者身份，但让
+    // 应用带有有效的代码签名结构，双击即可正常启动。
+    //
+    // 配置了正式证书（CSC_LINK / CSC_KEY_PASSWORD）时，CI 会用证书
+    // 签名，identity 会被实际证书覆盖。
+    identity: '-',
+    hardenedRuntime: false,
+    gatekeeperAssess: false,
+    // 同时产出 Apple Silicon 与 Intel 两版
     artifactName: '${productName}-${version}-${arch}-mac.${ext}'
   },
   linux: {
