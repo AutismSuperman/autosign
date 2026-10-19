@@ -98,15 +98,24 @@ interface Props {
  * 混进合计会让人以为整站真有这么多。一个可用数据都没有时不显示，
  * 避免出现一个没有意义的 $0.00。
  */
-function SiteTotals({ site }: { site: Site }): React.JSX.Element | null {
+/**
+ * 站点卡片头部的汇总：账号数量 + 合计金额。
+ *
+ * 金额只累加刷新成功、且有该字段的账号：失败账号的额度是上次的旧数据，
+ * 混进合计会让人以为整站真有这么多。账号数量始终显示全部账号数，
+ * 有失败账号时在悬停提示里说明实际参与合计的数量。
+ */
+function SiteSummary({ site }: { site: Site }): React.JSX.Element {
   let available = 0
   let used = 0
   let hasAvailable = false
   let hasUsed = false
+  let okCount = 0
 
   for (const account of site.accounts) {
     const status = account.lastStatus
     if (!status?.ok) continue
+    okCount++
     if (status.available !== undefined) {
       available += status.available
       hasAvailable = true
@@ -117,19 +126,32 @@ function SiteTotals({ site }: { site: Site }): React.JSX.Element | null {
     }
   }
 
-  if (!hasAvailable && !hasUsed) return null
+  const hasAmounts = hasAvailable || hasUsed
+  const failed = site.accounts.length - okCount
+  const hint = hasAmounts
+    ? failed > 0
+      ? `${site.accounts.length} 个账号，其中 ${okCount} 个刷新成功参与合计`
+      : `${site.accounts.length} 个账号全部刷新成功`
+    : `${site.accounts.length} 个账号，暂无刷新成功的额度数据`
 
-  const count = site.accounts.filter((a) => a.lastStatus?.ok).length
   return (
-    <span className="site-totals" title={`${count} 个账号刷新成功时的合计`}>
-      {hasAvailable && (
-        <span>
-          合计可用 <b className="amount ok">{money(available)}</b>
-        </span>
-      )}
-      {hasUsed && (
-        <span>
-          累计 <b className="amount used">{money(used)}</b>
+    <span className="site-summary" title={hint}>
+      <span className="site-account-count">
+        {site.accounts.length} 个账号
+        {failed > 0 && <span className="site-account-failed">（{failed} 个异常）</span>}
+      </span>
+      {hasAmounts && (
+        <span className="site-totals">
+          {hasAvailable && (
+            <span>
+              合计可用 <b className="amount ok">{money(available)}</b>
+            </span>
+          )}
+          {hasUsed && (
+            <span>
+              累计 <b className="amount used">{money(used)}</b>
+            </span>
+          )}
         </span>
       )}
     </span>
@@ -493,7 +515,7 @@ export function SitesView(props: Props): React.JSX.Element {
                   {site.hidden && <span className="tag warn">已隐藏</span>}
                 </span>
               </span>
-              <SiteTotals site={site} />
+              <SiteSummary site={site} />
               <span className="spacer" />
               <span className="site-actions">
                 <button

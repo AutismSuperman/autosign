@@ -808,8 +808,8 @@ input:focus-visible {
   white-space: nowrap;
 }
 
-/* 站点标题行的合计金额 */
-.site-totals {
+/* 站点标题行的汇总：账号数 + 合计金额 */
+.site-summary {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -820,7 +820,24 @@ input:focus-visible {
   white-space: nowrap;
 }
 
-.site-totals b {
+.site-account-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.site-account-failed {
+  color: var(--warn);
+}
+
+.site-totals {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.site-totals b,
+.site-account-count {
   font-variant-numeric: tabular-nums;
 }
 

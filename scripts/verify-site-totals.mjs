@@ -121,6 +121,7 @@ await sleep(1800)
 const cards = JSON.parse(
   await ev(`JSON.stringify([...document.querySelectorAll('.site-card')].map(card => ({
     site: card.querySelector('.site-name')?.textContent || '',
+    count: card.querySelector('.site-account-count')?.innerText.replace(/\\n/g, ' ') || '',
     totals: card.querySelector('.site-totals')?.innerText.replace(/\\n/g, ' ') || '',
     hasTotals: !!card.querySelector('.site-totals')
   })))`)
@@ -129,18 +130,26 @@ const cards = JSON.parse(
 const normal = cards.find((c) => c.site === 'DemoSite')
 const failed = cards.find((c) => c.site === 'FailedSite')
 
-ck('有数据的站点显示合计', normal?.hasTotals === true, normal?.totals || '缺失')
+ck('站点卡片显示账号数量', normal?.count.includes('3 个账号'), normal?.count || '缺失')
+ck('账号数量与合计同时显示', normal?.hasTotals === true, normal?.totals || '缺失')
 ck('合计可用是三个账号之和', normal?.totals.includes('$600.75'), normal?.totals)
 ck('合计累计是三个账号之和', normal?.totals.includes('$60.75'), normal?.totals)
 ck('合计金额带语义色（可用为绿）', (await ev(`!!document.querySelector('.site-totals .amount.ok')`)) === true)
+
+// 全部账号都失败时：数量仍然显示，但不出现合计
 ck(
   '失败账号不参与合计（该站点不显示合计）',
   failed?.hasTotals === false,
   failed ? `${failed.site}: ${failed.totals || '无'}` : '站点缺失'
 )
 ck(
-  '每个站点卡片最多一个合计',
-  (await ev(`[...document.querySelectorAll('.site-card')].every(c => c.querySelectorAll('.site-totals').length <= 1)`)) === true
+  '无可用数据时仍显示账号数量',
+  failed?.count.includes('1 个账号') && failed?.count.includes('异常'),
+  failed?.count || '缺失'
+)
+ck(
+  '每个站点卡片最多一个汇总',
+  (await ev(`[...document.querySelectorAll('.site-card')].every(c => c.querySelectorAll('.site-summary').length === 1)`)) === true
 )
 
 const failedCount = checks.filter((x) => !x).length
