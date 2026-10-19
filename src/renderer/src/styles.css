@@ -1346,6 +1346,23 @@ input:focus-visible {
   margin-bottom: 14px;
 }
 
+/* ============ 账号打码遮罩 ============ */
+
+/* 开启打码后用来替代账号文本：一块灰条，不渲染任何原始字符 */
+.masked-text {
+  display: inline-block;
+  height: 13px;
+  flex: none;
+  vertical-align: middle;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--text-faint) 55%, transparent);
+}
+
+.masked-text-sm {
+  height: 9px;
+  border-radius: 2px;
+}
+
 /* ============ 自绘下拉 ============ */
 
 .zselect {

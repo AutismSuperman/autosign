@@ -11,7 +11,6 @@ import { AddAccountDialog } from './components/AddAccountDialog'
 import { ToastHost, useToasts } from './components/Toast'
 import { applyTheme, watchSystemTheme } from './lib/theme'
 import { sortSites } from './lib/sort'
-import { maskIdentifier } from './lib/format'
 
 export type ViewKey = 'sites' | 'credentials' | 'logs' | 'settings'
 
@@ -63,13 +62,16 @@ export function App(): React.JSX.Element {
   const { toasts, showToast, dismiss } = useToasts()
 
   /**
-   * 账号名展示口径：开启打码后批量进度里的账号名也要遮住。
-   * 用 ref 读取最新值，避免把设置塞进各个 useCallback 的依赖里。
+   * 批量进度里的账号名。
+   *
+   * 进度条是纯文本，没法塞遮罩块；开启打码时干脆不显示账号名，
+   * 只保留站点，避免任何身份信息以文字形式漏出。
    */
   const maskRef = useRef(false)
   maskRef.current = config?.settings.maskAccounts ?? false
-  const maskAccount = useCallback(
-    (label: string): string => (maskRef.current ? maskIdentifier(label) : label),
+  const batchName = useCallback(
+    (siteName: string, label: string): string =>
+      maskRef.current ? `${siteName} / 已打码账号` : `${siteName} / ${label}`,
     []
   )
 
@@ -186,7 +188,7 @@ export function App(): React.JSX.Element {
           showToast(
             reauthAccountId
               ? '已重新授权，会话已更新'
-              : `已登录${result.account ? `：${maskAccount(result.account.label)}` : ''}`,
+              : `已登录${result.account ? `：${maskRef.current ? '账号已打码' : result.account.label}` : ''}`,
             'success'
           )
         } else {
@@ -196,7 +198,7 @@ export function App(): React.JSX.Element {
         endBusy(key)
       }
     },
-    [refresh, showToast, beginBusy, endBusy, maskAccount]
+    [refresh, showToast, beginBusy, endBusy]
   )
 
   const refreshAccount = useCallback(
@@ -269,7 +271,7 @@ export function App(): React.JSX.Element {
           kind: 'checkin',
           done: i,
           total: targets.length,
-          current: `${t.siteName} / ${maskAccount(t.account.label)}`
+          current: batchName(t.siteName, t.account.label)
         })
         // 让该行也能显示自己的处理中状态
         beginBusy(`checkin:${t.account.id}`)
@@ -291,7 +293,7 @@ export function App(): React.JSX.Element {
       setBatchProgress(null)
       await refresh()
     }
-  }, [scopeSites, activeSiteId, refresh, showToast, beginBusy, endBusy, maskAccount])
+  }, [scopeSites, activeSiteId, refresh, showToast, beginBusy, endBusy, batchName])
 
   /**
    * 刷新额度：和批量签到一样逐账号串行，并把进度显示出来。
@@ -316,7 +318,7 @@ export function App(): React.JSX.Element {
           kind: 'refresh',
           done: i,
           total: targets.length,
-          current: `${t.siteName} / ${maskAccount(t.account.label)}`
+          current: batchName(t.siteName, t.account.label)
         })
         beginBusy(`status:${t.account.id}`)
         try {
@@ -337,7 +339,7 @@ export function App(): React.JSX.Element {
       setBatchProgress(null)
       await refresh()
     }
-  }, [scopeSites, refresh, showToast, beginBusy, endBusy, maskAccount])
+  }, [scopeSites, refresh, showToast, beginBusy, endBusy, batchName])
 
   const removeAccount = useCallback(
     async (accountId: string) => {

@@ -31,6 +31,7 @@ import type {
 } from '@shared/types'
 import { useConfirm } from './ConfirmDialog'
 import { EditSiteDialog } from './EditSiteDialog'
+import { MaskedText } from './MaskedText'
 import { Select } from './Select'
 import type { ToastKind } from './Toast'
 import { copyText } from '../lib/clipboard'
@@ -42,7 +43,6 @@ import {
   checkinText,
   describeStatusError,
   isSessionExpired,
-  maskIdentifier,
   money,
   timeAgo
 } from '../lib/format'
@@ -107,9 +107,6 @@ function SiteAvatar({ site }: { site: Site }): React.JSX.Element {
 /** 站点与账号主视图。 */
 export function SitesView(props: Props): React.JSX.Element {
   const { allSites } = props
-  /** 账号信息的统一展示出口：开启打码后所有身份文本都经过它。 */
-  const show = (value: string | undefined | null): string =>
-    props.maskAccounts ? maskIdentifier(value) : (value ?? '')
   const totalAccounts = allSites.reduce((n, s) => n + s.accounts.length, 0)
   const [dragId, setDragId] = useState<string | null>(null)
   /** 正在拖拽的账号 id，用于站点内账号排序。 */
@@ -278,7 +275,9 @@ export function SitesView(props: Props): React.JSX.Element {
       confirmLabel: '移除',
       message: (
         <>
-          将移除 <b>{site.name}</b> 上的账号 <b>{show(label)}</b> 的会话，登录凭据不受影响。
+          将移除 <b>{site.name}</b> 上的账号{' '}
+          <b>{props.maskAccounts ? <MaskedText value={label} size="sm" /> : label}</b>{' '}
+          的会话，登录凭据不受影响。
         </>
       )
     })
@@ -586,7 +585,11 @@ export function SitesView(props: Props): React.JSX.Element {
                   </span>
                   <div className="account-main">
                     <div className="account-label">
-                      {show(account.label)}
+                      {props.maskAccounts ? (
+                        <MaskedText value={account.label} />
+                      ) : (
+                        account.label
+                      )}
                       <span className="tag">{PROVIDER_SHORT[account.provider] ?? account.provider}</span>
                       {credential ? (
                         <span
@@ -601,7 +604,15 @@ export function SitesView(props: Props): React.JSX.Element {
                                 }`
                           }
                         >
-                          登录账号 {show(credential.displayName || credential.username)}
+                          登录账号{' '}
+                          {props.maskAccounts ? (
+                            <MaskedText
+                              value={credential.displayName || credential.username}
+                              size="sm"
+                            />
+                          ) : (
+                            credential.displayName || credential.username
+                          )}
                         </span>
                       ) : (
                         <span className="tag muted" title="本次登录未关联已保存的凭据">

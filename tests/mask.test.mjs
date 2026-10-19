@@ -1,8 +1,13 @@
 /**
- * 账号打码的文案处理测试。
+ * 账号打码的文本切分测试。
  *
- * 打码只影响显示，不能改变数据：这里断言的是「显示出来的字符串」，
- * 顺带验证短串、邮箱、日志正文替换的边界。
+ * 打码现在的语义是「整块遮住」：原始账号字符不出现在渲染结果里，
+ * 只用一个按长度估算宽度的遮罩块替代。这里验证切分逻辑的边界：
+ *
+ *   1. 命中账号时只把账号片段标成 mask，其余文字原样保留
+ *   2. 长串优先，短串不会把长串切碎后漏出后半段
+ *   3. 同一句里多个账号都能遮住
+ *   4. 没有命中、空文本、空清单时不做无意义切分
  *
  * 运行：npm test
  */
@@ -13,15 +18,14 @@ import { build } from 'esbuild'
 const require = createRequire(import.meta.url)
 mkdirSync('.tmp', { recursive: true })
 await build({
-  entryPoints: ['src/renderer/src/lib/format.ts'],
+  entryPoints: ['src/renderer/src/lib/mask.ts'],
   bundle: true,
   platform: 'node',
   format: 'cjs',
-  outfile: '.tmp/format.cjs',
-  logLevel: 'error',
-  alias: { '@shared': './src/shared' }
+  outfile: '.tmp/mask.cjs',
+  logLevel: 'error'
 })
-const { maskIdentifier, maskLogMessage } = require('../.tmp/format.cjs')
+const { splitByIdentifiers, containsIdentifier } = require('../.tmp/mask.cjs')
 
 const checks = []
 const ck = (name, ok, detail) => {
@@ -29,57 +33,71 @@ const ck = (name, ok, detail) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  [${detail}]` : ''}`)
 }
 
-// --- maskIdentifier ---
+const ids = ['github_679839', 'demo-user@example.com']
+const join = (segs) => segs.map((s) => (s.kind === 'mask' ? `«${s.value}»` : s.value)).join('')
 
-const gh = maskIdentifier('github_679839')
-ck('长账号保留首尾字符', gh.startsWith('g') && gh.endsWith('9') && gh.includes('*'), gh)
-ck('长账号中间被遮住', !gh.includes('github') && !gh.includes('67983'), gh)
+// 1. 账号命中，站点名与结果描述保持为普通文字
+{
+  const segs = splitByIdentifiers('AgentRouter / github_679839：签到成功 +$25', ids)
+  const text = join(segs)
+  ck('账号被标为遮罩段', segs.some((s) => s.kind === 'mask' && s.value === 'github_679839'), text)
+  ck('站点名保持不变', text.startsWith('AgentRouter / '), text)
+  ck('结果描述保持不变', text.endsWith('：签到成功 +$25'), text)
+  ck(
+    '普通文字段里不含账号原文',
+    segs.filter((s) => s.kind === 'text').every((s) => !s.value.includes('github_679839')),
+    text
+  )
+}
 
-const email = maskIdentifier('demo-user@example.com')
-ck('邮箱保留域名', email.endsWith('@example.com'), email)
-ck('邮箱本地部分被遮', !email.includes('demo-user'), email)
+// 2. 邮箱形式的账号
+{
+  const segs = splitByIdentifiers('已登录 demo-user@example.com', ids)
+  ck('邮箱账号被遮罩', segs.some((s) => s.kind === 'mask' && s.value === 'demo-user@example.com'), join(segs))
+}
 
-const short = maskIdentifier('ab')
-ck('两个字符全遮', short === '**', short)
+// 3. 长串优先：user 是 user_123 的前缀
+{
+  const segs = splitByIdentifiers('x user_123 y', ['user', 'user_123'])
+  const masks = segs.filter((s) => s.kind === 'mask').map((s) => s.value)
+  ck('重叠标识取最长匹配', masks.length === 1 && masks[0] === 'user_123', join(segs))
+  ck('未残留 _123 尾巴', !segs.some((s) => s.kind === 'text' && s.value.includes('_123')), join(segs))
+}
 
-const three = maskIdentifier('abc')
-ck('三到四个字符保留首尾', three === 'a*c', three)
+// 4. 同一句里出现多个账号
+{
+  const segs = splitByIdentifiers(
+    'github_679839 与 demo-user@example.com 都已签到',
+    ids
+  )
+  const masks = segs.filter((s) => s.kind === 'mask').map((s) => s.value)
+  ck('多个账号都被遮罩', masks.length === 2, masks.join(','))
+  ck('中间的连接词保留', segs.some((s) => s.kind === 'text' && s.value.includes('与')), join(segs))
+}
 
-const phone = maskIdentifier('13800001111')
-ck('纯数字同样打码', phone.startsWith('1') && phone.includes('*') && !phone.includes('0000'), phone)
+// 5. 不命中时不切分
+{
+  const segs = splitByIdentifiers('DemoSite：刷新失败', ids)
+  ck('无命中时原样返回单段', segs.length === 1 && segs[0].kind === 'text', join(segs))
+}
 
-ck('空值返回空串', maskIdentifier('') === '' && maskIdentifier(undefined) === '' && maskIdentifier(null) === '')
+// 6. 边界
+ck('空文本返回空数组', splitByIdentifiers('', ids).length === 0)
+ck('空标识清单返回原文', join(splitByIdentifiers('abc', [])) === 'abc')
+ck('空白标识被忽略', join(splitByIdentifiers('abc', ['', '  '])) === 'abc')
 
-const cjk = maskIdentifier('张三丰')
-ck('中文按字符打码', cjk.startsWith('张') && cjk.includes('*'), cjk)
+// 7. containsIdentifier 用于快速判断是否需要切分
+ck('能判断出包含账号', containsIdentifier('a github_679839 b', ids) === true)
+ck('能判断出不包含账号', containsIdentifier('nothing here', ids) === false)
+ck('空清单时不命中', containsIdentifier('abc', []) === false)
 
-// --- maskLogMessage ---
-
-const logs = [
-  'AgentRouter / github_679839：签到成功 +$25',
-  'AgentRouter / github_679839：会话已失效',
-  '已登录 demo-user@example.com',
-  'DemoSite：刷新失败'
-]
-const identifiers = ['github_679839', 'demo-user@example.com']
-const masked = logs.map((m) => maskLogMessage(m, identifiers, maskIdentifier))
-
-ck('站点名保持不变', masked[0].startsWith('AgentRouter / '), masked[0])
-ck('日志里的账号被遮', !masked[0].includes('github_679839'), masked[0])
-ck('结果描述保持不变', masked[0].endsWith('签到成功 +$25'), masked[0])
-ck('邮箱账号也被遮', !masked[2].includes('demo-user@example.com'), masked[2])
-ck('无账号的日志原样保留', masked[3] === logs[3], masked[3])
-ck(
-  '所有日志均不含原始标识',
-  masked.every((m, i) => !identifiers.some((id) => m.includes(id)) && m !== undefined),
-  masked.map((m, i) => (m === logs[i] ? 'unchanged' : 'masked')).join(',')
-)
-
-// 长串优先：短标识是长标识的前缀时不能把长标识切碎后漏掉后半段
-const overlap = maskLogMessage('x user_123 y', ['user', 'user_123'], maskIdentifier)
-ck('重叠标识按长串优先替换', !overlap.includes('user_123'), overlap)
-
-ck('空标识清单时原样返回', maskLogMessage('abc', [], maskIdentifier) === 'abc')
+// 8. 账号出现在句首 / 句尾
+{
+  const head = join(splitByIdentifiers('github_679839：签到成功', ids))
+  ck('句首账号也能遮', head === '«github_679839»：签到成功', head)
+  const tail = join(splitByIdentifiers('签到成功 github_679839', ids))
+  ck('句尾账号也能遮', tail === '签到成功 «github_679839»', tail)
+}
 
 const failed = checks.filter((x) => !x).length
 console.log(`\n${failed === 0 ? 'ALL PASS' : `${failed} FAILED`} (${checks.length} checks)`)

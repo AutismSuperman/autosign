@@ -12,8 +12,9 @@ import {
   Trash2
 } from 'lucide-react'
 import type { LogEntry, LogLevel, Site } from '@shared/types'
+import { MaskedText } from './MaskedText'
+import { containsIdentifier, splitByIdentifiers } from '../lib/mask'
 import { useConfirm } from './ConfirmDialog'
-import { maskIdentifier, maskLogMessage } from '../lib/format'
 
 interface Props {
   logs: LogEntry[]
@@ -105,31 +106,44 @@ export function LogsView({ logs, sites, maskAccounts, onReload, onClear }: Props
   }
 
   /**
-   * 打码用的身份清单。
+   * 账号标识的渲染。
    *
    * 日志正文是主进程拼好的整句，无法从文本判断哪一段是账号，
-   * 因此收集所有账号名与站点名，按字面量替换。站点名不在其中——
-   * 站点不是身份信息，保留后日志仍然可读。
+   * 因此用已知账号名做字面量匹配，命中后替换成遮罩块——原始字符
+   * 完全不进入 DOM，截图和查看元素都拿不到。
    */
   const identifiers = useMemo(() => {
     if (!maskAccounts) return []
     return sites.flatMap((s) => s.accounts.map((a) => a.label))
   }, [sites, maskAccounts])
 
-  const display = useMemo(
-    () => (text: string): string =>
-      maskAccounts ? maskLogMessage(text, identifiers, maskIdentifier) : text,
-    [maskAccounts, identifiers]
-  )
+  /** 把一句话里的账号标识替换成遮罩块；没有命中时原样返回字符串。 */
+  const renderText = (text: string): React.ReactNode => {
+    if (!maskAccounts || !containsIdentifier(text, identifiers)) return text
+    return splitByIdentifiers(text, identifiers).map((seg, i) =>
+      seg.kind === 'mask' ? (
+        <MaskedText key={`m${i}`} value={seg.value} size="sm" />
+      ) : (
+        <span key={`t${i}`}>{seg.value}</span>
+      )
+    )
+  }
 
   /** 日志只记 id，展开详情时翻成名称；找不到时退回 id，不让详情空着。 */
   const siteNameOf = (siteId: string): string =>
     sites.find((s) => s.id === siteId)?.name ?? siteId
 
-  const accountLabelOf = (accountId: string): string => {
+  const accountLabelOf = (accountId: string): React.ReactNode => {
     for (const site of sites) {
       const hit = site.accounts.find((a) => a.id === accountId)
-      if (hit) return `${display(hit.label)}（${site.name}）`
+      if (hit) {
+        return (
+          <>
+            {maskAccounts ? <MaskedText value={hit.label} size="sm" /> : hit.label}
+            （{site.name}）
+          </>
+        )
+      }
     }
     return accountId
   }
@@ -217,8 +231,8 @@ export function LogsView({ logs, sites, maskAccounts, onReload, onClear }: Props
                   {log.scope}
                 </span>
                 <span className="log-msg">
-                  {display(log.message)}
-                  {log.detail && <div className="log-detail">{display(log.detail)}</div>}
+                  {renderText(log.message)}
+                  {log.detail && <div className="log-detail">{renderText(log.detail)}</div>}
                   {open && (
                     <div className="log-extra">
                       <div>
@@ -248,7 +262,7 @@ export function LogsView({ logs, sites, maskAccounts, onReload, onClear }: Props
                       {log.detail && (
                         <div>
                           <span className="log-extra-key">详情</span>
-                          {display(log.detail)}
+                          {renderText(log.detail)}
                         </div>
                       )}
                     </div>

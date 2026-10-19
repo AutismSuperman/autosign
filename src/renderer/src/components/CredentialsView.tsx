@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { Copy, KeyRound, Pencil, Plus, Search, ShieldCheck, Trash2 } from 'lucide-react'
 import type { AuthProvider, PublicCredential } from '@shared/types'
 import { Modal } from './Modal'
+import { MaskedText } from './MaskedText'
 import { Select } from './Select'
 import { useConfirm } from './ConfirmDialog'
 import type { ToastKind } from './Toast'
 import { copyText } from '../lib/clipboard'
-import { maskIdentifier, providerAvatar, providerLabel, timeAgo } from '../lib/format'
+import { providerAvatar, providerLabel, timeAgo } from '../lib/format'
 
 interface Props {
   onToast: (message: string, kind?: ToastKind) => void
@@ -64,9 +65,6 @@ const EMPTY: Draft = {
  * 这与系统密钥加密的语义一致：加密后只有主进程能解开，界面拿不到原文。
  */
 export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): React.JSX.Element {
-  /** 身份信息的统一展示出口：开启打码后所有用户名都经过它。 */
-  const show = (value: string | undefined | null): string =>
-    maskAccounts ? maskIdentifier(value) : (value ?? '')
   const [list, setList] = useState<PublicCredential[]>([])
   const [draft, setDraft] = useState<Draft | null>(null)
   const [saving, setSaving] = useState(false)
@@ -164,7 +162,15 @@ export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): Re
       confirmLabel: '删除',
       message: (
         <>
-          将删除凭据 <b>{show(c.displayName || c.username)}</b>（{providerLabel(c.provider)}）。
+          将删除凭据{' '}
+          <b>
+            {maskAccounts ? (
+              <MaskedText value={c.displayName || c.username} size="sm" />
+            ) : (
+              c.displayName || c.username
+            )}
+          </b>
+          （{providerLabel(c.provider)}）。
           已登录的站点会话不受影响，但之后无法再用它自动登录。
         </>
       )
@@ -172,7 +178,11 @@ export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): Re
     if (!ok) return
     setList(await window.api.credential.remove(c.id))
     onChanged?.()
-    onToast(`已删除 ${show(c.displayName || c.username)}`, 'success')
+    // toast 走打码后的简短描述：不打码时给名字，打码时只给方式，避免从提示里漏出原文
+    onToast(
+      maskAccounts ? '凭据已删除' : `已删除 ${c.displayName || c.username}`,
+      'success'
+    )
   }
 
   const copy = async (text: string, what: string): Promise<void> => {
@@ -281,7 +291,11 @@ export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): Re
                 <div className="cred-main">
                   <div className="cred-name">
                     <span className="cred-name-row">
-                      {show(c.displayName || c.username)}
+                      {maskAccounts ? (
+                        <MaskedText value={c.displayName || c.username} />
+                      ) : (
+                        c.displayName || c.username
+                      )}
                       <button
                         className="icon-btn tiny"
                         onClick={() => void copy(c.username, '用户名')}
@@ -292,7 +306,11 @@ export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): Re
                     </span>
                     <span className="tag">{providerLabel(c.provider)}</span>
                     {/* 显示名称与登录用户名不同时，把用户名也标出来，避免认错身份 */}
-                    {c.displayName && <span className="cred-username">{show(c.username)}</span>}
+                    {c.displayName && (
+                      <span className="cred-username">
+                        {maskAccounts ? <MaskedText value={c.username} size="sm" /> : c.username}
+                      </span>
+                    )}
                     {c.note && <span className="cred-note">{c.note}</span>}
                   </div>
                   <div className="cred-meta">

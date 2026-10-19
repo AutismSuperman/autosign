@@ -148,31 +148,54 @@ ck('打码开关默认关闭', (await ev(`document.querySelector('${toggleSel}')
 await ev(`document.querySelector('${toggleSel}')?.click()`)
 await sleep(700)
 
-const after = await ev(`document.querySelector('.account-label')?.innerText || ''`)
-ck('开启后账号名被遮', !after.includes(RAW_LABEL) && after.includes('*'), after)
-ck('开启后登录凭据名被遮', !after.includes(RAW_DISPLAY), after)
-ck('打码后仍保留首尾字符', /g\*+6/.test(after), after)
+const after = await ev(`JSON.stringify({
+  text: document.querySelector('.account-label')?.innerText || '',
+  blocks: document.querySelectorAll('.account-label .masked-text').length,
+  blockWidth: document.querySelector('.account-label .masked-text')?.getBoundingClientRect().width ?? 0,
+  loginBlocks: document.querySelectorAll('.account-label .tag.login-id .masked-text').length
+})`)
+const afterState = JSON.parse(after)
+ck('开启后账号名换成遮罩块', afterState.blocks >= 1, `${afterState.blocks} 块`)
+ck('遮罩块不再包含任何原文', !afterState.text.includes(RAW_LABEL), afterState.text)
+ck('登录账号也换成遮罩块', afterState.loginBlocks >= 1, `${afterState.loginBlocks} 块`)
+ck('遮罩块有实际宽度（不是塌陷的）', afterState.blockWidth > 10, `${Math.round(afterState.blockWidth)}px`)
 ck('开关进入开启态', (await ev(`document.querySelector('${toggleSel}')?.getAttribute('aria-pressed')`)) === 'true')
 ck(
   '页面 DOM 中不再出现原始账号',
   (await ev(`document.querySelector('.content')?.innerText || ''`)).includes(RAW_LABEL) === false
 )
-
-// 凭据页：显示名称与用户名都应遮住
-await nav('账号')
-const credText = await ev(`document.querySelector('.cred-list, .panel')?.innerText || ''`)
 ck(
-  '凭据页用户名被打码',
-  !credText.includes(RAW_ACCOUNT) && !credText.includes(RAW_DISPLAY) && credText.includes('*'),
-  credText.split('\n').slice(0, 3).join(' | ')
+  '页面 HTML 里也没有原始账号（不是靠 CSS 遮挡）',
+  (await ev(`document.querySelector('.content')?.innerHTML || ''`)).includes(RAW_LABEL) === false
 )
+
+// 凭据页：显示名称与用户名都换成遮罩块
+await nav('账号')
+const credState = JSON.parse(
+  await ev(`JSON.stringify({
+    text: document.querySelector('.cred-list, .panel')?.innerText || '',
+    html: document.querySelector('.cred-list, .panel')?.innerHTML || '',
+    blocks: document.querySelectorAll('.cred-row .masked-text').length
+  })`)
+)
+ck('凭据页用户名换成遮罩块', credState.blocks >= 1, `${credState.blocks} 块`)
+ck('凭据页文本里没有原文', !credState.text.includes(RAW_ACCOUNT) && !credState.text.includes(RAW_DISPLAY), credState.text.split('\n').slice(0, 3).join(' | '))
+ck('凭据页 HTML 里没有原文', !credState.html.includes(RAW_ACCOUNT), 'checked')
 
 // 日志页
 await nav('运行日志')
 await sleep(500)
-const logText = await ev(`document.querySelector('.content')?.innerText || ''`)
-ck('日志正文里的账号被打码', !logText.includes(RAW_LABEL) && logText.includes('*'), logText.split('\n').slice(0, 2).join(' | '))
-ck('日志里的站点名仍可见', logText.includes('DemoSite'))
+const logState = JSON.parse(
+  await ev(`JSON.stringify({
+    text: document.querySelector('.content')?.innerText || '',
+    html: document.querySelector('.content')?.innerHTML || '',
+    blocks: document.querySelectorAll('.log-msg .masked-text').length
+  })`)
+)
+ck('日志正文里的账号换成遮罩块', logState.blocks >= 1, `${logState.blocks} 块`)
+ck('日志文本里没有账号原文', !logState.text.includes(RAW_LABEL), logState.text.split('\n').slice(0, 2).join(' | '))
+ck('日志 HTML 里没有账号原文', !logState.html.includes(RAW_LABEL), 'checked')
+ck('日志里的站点名仍可见', logState.text.includes('DemoSite'))
 
 // 设置页有同一开关
 await nav('设置')
