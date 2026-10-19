@@ -6,6 +6,7 @@ import {
   nativeImage,
   nativeTheme,
   Notification,
+  screen,
   shell,
   Tray
 } from 'electron'
@@ -43,6 +44,8 @@ import { isUsableTotpSecret, secondsRemaining, totp } from './auth/totp'
 import { accountFromPasswordLogin, passwordLogin } from './auth/passwordLogin'
 import type { SessionDeps } from './sites/session'
 import { randomUUID } from 'node:crypto'
+import { sanitizeWindowBounds } from './windowBounds'
+import { WindowStateStore } from './windowState'
 
 /**
  * 必须在读取任何 app 路径之前设置应用名。
@@ -71,6 +74,7 @@ if (!app.isPackaged && !hasExplicitUserData) {
  */
 
 const store = new ConfigStore()
+const windowState = new WindowStateStore()
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 /** 只有托盘菜单的「退出」（或系统退出流程）才允许真正关闭窗口。 */
@@ -90,7 +94,7 @@ function windowBackgroundColor(): string {
 
 function showMainWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) {
-    createWindow()
+    void createWindow()
     return
   }
   if (mainWindow.isMinimized()) mainWindow.restore()
@@ -1164,10 +1168,51 @@ async function migrateLegacyPartitions(): Promise<void> {
   }
 }
 
-function createWindow(): void {
-  mainWindow = new BrowserWindow({
+/**
+ * 记下窗口当前的几何信息。
+ *
+ * 最大化 / 全屏时 `getBounds()` 返回的是屏幕大小，直接存下来会让
+ * 下次「取消最大化」还原成整屏。所以最大化时只记录标记，尺寸沿用
+ * 上一次普通状态的尺寸；还原时 Electron 自己会回到那个尺寸。
+ */
+function captureWindowBounds(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  const maximized = win.isMaximized()
+  if (maximized || win.isFullScreen()) {
+    const current = windowState.lastNormal
+    if (!current) return
+    // 全屏不算最大化：下次仍以普通窗口打开，位置与尺寸沿用上一次普通状态
+    windowState.schedule({ ...current, maximized })
+    return
+  }
+  const rect = win.getBounds()
+  windowState.lastNormal = rect
+  windowState.schedule({ ...rect, maximized: false })
+}
+
+async function createWindow(): Promise<void> {
+  const saved = await windowState.read()
+  const primary = screen.getPrimaryDisplay()
+  // sanitizeWindowBounds 以数组首项为主屏，getAllDisplays() 的顺序不保证主屏在前
+  const displays = [
+    { workArea: primary.workArea },
+    ...screen
+      .getAllDisplays()
+      .filter((d) => d.id !== primary.id)
+      .map((d) => ({ workArea: d.workArea }))
+  ]
+  const bounds = sanitizeWindowBounds(saved, displays, {
     width: 1440,
     height: 900,
+    minWidth: 1040,
+    minHeight: 640
+  })
+
+  mainWindow = new BrowserWindow({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
     minWidth: 1040,
     minHeight: 640,
     show: false,
@@ -1185,12 +1230,28 @@ function createWindow(): void {
     }
   })
 
+  // 记住未被最大化时最后一次的普通尺寸，供 captureWindowBounds 使用
+  windowState.lastNormal = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
+
+  // 事件监听要在 maximize() 之前注册，否则恢复最大化状态不会被记录
+  // 拖动 / 缩放结束后记录；不监听 resize 过程中的每一帧
+  mainWindow.on('resized', () => mainWindow && captureWindowBounds(mainWindow))
+  mainWindow.on('moved', () => mainWindow && captureWindowBounds(mainWindow))
+  mainWindow.on('maximize', () => mainWindow && captureWindowBounds(mainWindow))
+  mainWindow.on('unmaximize', () => mainWindow && captureWindowBounds(mainWindow))
+  mainWindow.on('enter-full-screen', () => mainWindow && captureWindowBounds(mainWindow))
+  mainWindow.on('leave-full-screen', () => mainWindow && captureWindowBounds(mainWindow))
+
+  if (bounds.maximized) mainWindow.maximize()
+
   mainWindow.once('ready-to-show', () => mainWindow?.show())
 
   // 关窗最小化到托盘：定时签到依赖主进程存活，直接退出会让「关闭窗口后仍会按时运行」落空
   mainWindow.on('close', (e) => {
     if (quitting) return
     e.preventDefault()
+    if (mainWindow) captureWindowBounds(mainWindow)
+    void windowState.flush()
     mainWindow?.hide()
     if (!trayHintShown) {
       trayHintShown = true
@@ -1227,7 +1288,7 @@ app.whenReady().then(async () => {
   // macOS 的 Dock 图标不受 BrowserWindow.icon 影响，必须单独设置；
   // 否则开发模式与未正确打包时会显示 Electron 默认图标。
   applyDockIcon()
-  createWindow()
+  await createWindow()
   createTray()
   scheduleNext()
   // 主动续期快过期的令牌：避免每次业务请求先吃一个 401 再去续期
@@ -1239,7 +1300,7 @@ app.whenReady().then(async () => {
   })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) void createWindow()
     else showMainWindow()
   })
 })
@@ -1262,4 +1323,7 @@ app.on('window-all-closed', () => {})
 
 app.on('before-quit', () => {
   quitting = true
+  // 退出前把最后一次窗口位置落盘，避免拖动后立刻退出丢失
+  if (mainWindow && !mainWindow.isDestroyed()) captureWindowBounds(mainWindow)
+  windowState.flushSync()
 })

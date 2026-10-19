@@ -54,8 +54,13 @@ interface Props {
   credentials: PublicCredential[]
   /** 正在进行的任务键集合；同一时刻可能有多个账号各自在处理。 */
   busy: Set<string>
-  /** 批量签到进度：用于在账号行就地标出正在签谁、已完成多少。 */
-  batchProgress: { done: number; total: number; current: string } | null
+  /** 批量任务进度：用于在账号行就地标出正在处理谁、已完成多少。 */
+  batchProgress: {
+    kind: 'checkin' | 'refresh'
+    done: number
+    total: number
+    current: string
+  } | null
   /** 侧栏选中了哪个站点；null 表示全部站点。 */
   activeSiteId: string | null
   /** 拖拽重排站点内账号。 */
@@ -349,7 +354,8 @@ export function SitesView(props: Props): React.JSX.Element {
         <div className="batch-bar" role="status" aria-live="polite">
           <RefreshCw size={14} className="rotating" />
           <span className="batch-text">
-            正在签到 {props.batchProgress.done + 1} / {props.batchProgress.total}
+            {props.batchProgress.kind === 'refresh' ? '正在刷新' : '正在签到'}{' '}
+            {props.batchProgress.done + 1} / {props.batchProgress.total}
             {props.batchProgress.current && (
               <b className="batch-current">{props.batchProgress.current}</b>
             )}
@@ -515,7 +521,13 @@ export function SitesView(props: Props): React.JSX.Element {
               const credential = credentialOf(account.credentialId)
               return (
                 <div
-                  className={checking ? 'account-row is-checking' : 'account-row'}
+                  className={
+                    checking
+                      ? 'account-row is-checking'
+                      : refreshing
+                        ? 'account-row is-refreshing'
+                        : 'account-row'
+                  }
                   key={account.id}
                   draggable={manualAccountOrder}
                   onDragStart={() => setDragAccountId(account.id)}
@@ -561,6 +573,13 @@ export function SitesView(props: Props): React.JSX.Element {
                         <span className="tag checking">
                           <RefreshCw size={11} className="rotating" />
                           签到中…
+                        </span>
+                      )}
+                      {/* 批量刷新时同样标在被刷新的那一个账号上 */}
+                      {!checking && refreshing && (
+                        <span className="tag checking">
+                          <RefreshCw size={11} className="rotating" />
+                          刷新中…
                         </span>
                       )}
                     </div>

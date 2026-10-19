@@ -52,8 +52,9 @@ export function App(): React.JSX.Element {
       return next
     })
   }, [])
-  /** 批量签到进度：当前处理到第几个、共多少个、正在签谁。 */
+  /** 批量任务进度：当前处理到第几个、共多少个、正在处理谁。 */
   const [batchProgress, setBatchProgress] = useState<{
+    kind: 'checkin' | 'refresh'
     done: number
     total: number
     current: string
@@ -247,12 +248,13 @@ export function App(): React.JSX.Element {
     if (targets.length === 0) return
 
     beginBusy('checkin-all')
-    setBatchProgress({ done: 0, total: targets.length, current: '' })
+    setBatchProgress({ kind: 'checkin', done: 0, total: targets.length, current: '' })
     let ok = 0
     try {
       for (let i = 0; i < targets.length; i++) {
         const t = targets[i]
         setBatchProgress({
+          kind: 'checkin',
           done: i,
           total: targets.length,
           current: `${t.siteName} / ${t.account.label}`
@@ -279,23 +281,49 @@ export function App(): React.JSX.Element {
     }
   }, [scopeSites, activeSiteId, refresh, showToast, beginBusy, endBusy])
 
-  /** 刷新账号额度，范围同样跟随侧栏选择。 */
+  /**
+   * 刷新额度：和批量签到一样逐账号串行，并把进度显示出来。
+   *
+   * 之前这里只有一个转圈的总按钮，18 个账号要等半分钟以上，
+   * 完全看不出进度、也不知道卡在哪个账号。现在每个账号开始刷新时
+   * 同时点亮该行的「刷新中」标记，顶部进度条同步推进。
+   */
   const refreshAll = useCallback(async () => {
+    const targets = scopeSites.flatMap((site) =>
+      site.accounts.map((account) => ({ siteId: site.id, siteName: site.name, account }))
+    )
+    if (targets.length === 0) return
+
     beginBusy('refresh-all')
+    setBatchProgress({ kind: 'refresh', done: 0, total: targets.length, current: '' })
+    let ok = 0
     try {
-      const ids = scopeSites.flatMap((s) => s.accounts.map((a) => a.id))
-      let ok = 0
-      for (const id of ids) {
-        const r = await window.api.account.status(id)
-        if (r.ok) ok++
+      for (let i = 0; i < targets.length; i++) {
+        const t = targets[i]
+        setBatchProgress({
+          kind: 'refresh',
+          done: i,
+          total: targets.length,
+          current: `${t.siteName} / ${t.account.label}`
+        })
+        beginBusy(`status:${t.account.id}`)
+        try {
+          const r = await window.api.account.status(t.account.id)
+          if (r.ok) ok++
+        } catch {
+          // 单个账号失败不打断整批
+        }
+        endBusy(`status:${t.account.id}`)
+        await refresh()
       }
-      await refresh()
       showToast(
-        `额度已刷新：成功 ${ok} / ${ids.length}`,
-        ids.length > 0 && ok === ids.length ? 'success' : 'info'
+        `额度已刷新：成功 ${ok} / ${targets.length}`,
+        ok === targets.length ? 'success' : 'info'
       )
     } finally {
       endBusy('refresh-all')
+      setBatchProgress(null)
+      await refresh()
     }
   }, [scopeSites, refresh, showToast, beginBusy, endBusy])
 

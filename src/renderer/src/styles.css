@@ -1237,6 +1237,12 @@ input:focus-visible {
   background: color-mix(in oklab, var(--accent) 7%, var(--bg));
 }
 
+/* 批量刷新时同样把当前账号凸出来，避免整屏账号看不出进度落在哪 */
+.account-row.is-refreshing {
+  border-color: var(--accent-dim);
+  background: color-mix(in oklab, var(--accent) 5%, var(--bg));
+}
+
 /* 行内签到中标签 */
 .tag.checking {
   display: inline-flex;
