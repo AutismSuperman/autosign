@@ -30,3 +30,8 @@ probe/
 # 截图与工具产生的临时目录
 .shot-ud*/
 .zcode/
+
+# 各类测试 / 截图用的 Electron 用户数据目录。
+# 这些目录含 Cookie、会话与配置，绝不可入库。
+.*-user-data/
+.*-data/
