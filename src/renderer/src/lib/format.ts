@@ -99,6 +99,20 @@ export function describeStatusError(status: {
 }
 
 /**
+ * 把时间戳格式化成北京时间的 HH:mm。
+ *
+ * 签到日界固定按北京时间切换，界面上「上次签到 23:44」也必须用同一时区，
+ * 否则海外用户或 CI（UTC）会看到与日期对不上的时间。
+ * 这里直接按 +8 偏移算，不依赖运行环境的本地时区设置。
+ */
+export function beijingTime(ts: number): string {
+  const offset = 8 * 3_600_000
+  const d = new Date(ts + offset)
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
+}
+
+/**
  * 签到状态文案。
  *
  * 过了北京时间 0 点，昨天的回执就失效：直接显示「未签」，
@@ -110,10 +124,7 @@ export function checkinText(
   now = Date.now()
 ): { label: string; reward?: number; stale: boolean; hint?: string } {
   if (!receipt?.ok) return { label: '未签', stale: false }
-  const time = new Date(receipt.at).toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit'
-  })
+  const time = beijingTime(receipt.at)
   if (isCheckedToday(receipt, now)) {
     return {
       label: receipt.already ? '今日已签' : '已签',
