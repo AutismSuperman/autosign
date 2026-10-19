@@ -390,7 +390,8 @@ export function SitesView(props: Props): React.JSX.Element {
           <RefreshCw size={14} className="rotating" />
           <span className="batch-text">
             {props.batchProgress.kind === 'refresh' ? '正在刷新' : '正在签到'}{' '}
-            {props.batchProgress.done + 1} / {props.batchProgress.total}
+            {Math.min(props.batchProgress.done + 1, props.batchProgress.total)} /{' '}
+            {props.batchProgress.total}
             {props.batchProgress.current && (
               <b className="batch-current">{props.batchProgress.current}</b>
             )}

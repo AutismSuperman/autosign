@@ -14,9 +14,10 @@
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { electronPath } from './electron-path.mjs'
 
 const root = process.cwd()
-const electron = join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
+const electron = electronPath
 const main = join(root, 'out', 'main', 'index.js')
 const PORT = 9454
 const userData = join(root, '.verify-batch-user-data')
@@ -113,7 +114,9 @@ await ev(`(() => {
     const row = document.querySelector('.account-row.is-refreshing')
     window.__frames.push({
       text: bar.innerText.replace(/\\n/g, '|'),
-      fill: bar.querySelector('.batch-fill')?.getBoundingClientRect().width ?? 0,
+      // 直接读行内 style 的百分比：getBoundingClientRect 依赖布局完成，
+      // 而 Linux 上单个账号失败极快，帧可能来不及布局就被移除了
+      fillPercent: bar.querySelector('.batch-fill')?.style.width || '',
       refreshedRows: document.querySelectorAll('.account-row.is-refreshing').length,
       tag: row?.querySelector('.tag.checking')?.innerText || ''
     })
@@ -134,8 +137,7 @@ await sleep(2000)
 
 const frames = JSON.parse((await ev(`JSON.stringify(window.__frames || [])`)) || '[]')
 const allText = frames.map((f) => f.text).join(' || ')
-const maxFill = frames.reduce((m, f) => Math.max(m, f.fill), 0)
-const minFill = frames.reduce((m, f) => Math.min(m, f.fill), Infinity)
+const fillPercents = frames.map((f) => f.fillPercent).filter(Boolean)
 const sawFirst = frames.some((f) => f.text.includes('正在刷新 1 / 2'))
 const sawSecond = frames.some((f) => f.text.includes('正在刷新 2 / 2'))
 const sawCurrent = frames.some((f) => f.text.includes('DemoSite / demo-user-a'))
@@ -148,7 +150,12 @@ ck('进度推进到 2 / 2', sawSecond, allText.slice(-160))
 ck('进度条标出当前账号', sawCurrent)
 ck('正在刷新的账号行被高亮', sawRowHighlight)
 ck('账号行显示「刷新中…」', sawRowTag)
-ck('进度条宽度随进度增长', maxFill > minFill, `${Math.round(minFill)}px → ${Math.round(maxFill)}px`)
+// 进度条按「已完成 / 总数」推进：最后一帧应到 100%
+ck(
+  '进度条按完成比例推进',
+  fillPercents.length > 0 && fillPercents[fillPercents.length - 1] === '100%',
+  fillPercents.join(' → ')
+)
 
 const end = await ev(`JSON.stringify({
   bar: document.querySelectorAll('.batch-bar').length,

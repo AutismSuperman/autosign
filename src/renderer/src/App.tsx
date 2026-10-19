@@ -282,6 +282,13 @@ export function App(): React.JSX.Element {
           // 单个账号失败不打断整批
         }
         endBusy(`checkin:${t.account.id}`)
+        // 与额度刷新一致：处理完一个就前进一格，最后一个结束时到 100%
+        setBatchProgress({
+          kind: 'checkin',
+          done: i + 1,
+          total: targets.length,
+          current: batchName(t.siteName, t.account.label)
+        })
         await refresh()
       }
       showToast(
@@ -328,6 +335,13 @@ export function App(): React.JSX.Element {
           // 单个账号失败不打断整批
         }
         endBusy(`status:${t.account.id}`)
+        // 让进度条在处理完一个账号后就前进一格，最后一个账号结束时到 100%
+        setBatchProgress({
+          kind: 'refresh',
+          done: i + 1,
+          total: targets.length,
+          current: batchName(t.siteName, t.account.label)
+        })
         await refresh()
       }
       showToast(

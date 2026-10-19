@@ -9,9 +9,10 @@
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { rmSync } from 'node:fs'
+import { electronPath } from './electron-path.mjs'
 
 const root = process.cwd()
-const electron = join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
+const electron = electronPath
 const main = join(root, 'out', 'main', 'index.js')
 const PORT = 9452
 const userData = join(root, '.verify-user-data')

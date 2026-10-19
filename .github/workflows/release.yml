@@ -50,16 +50,21 @@ jobs:
       - name: 构建
         run: npm run build
 
-      # Electron 在无显示服务器的 Linux 上需要 xvfb。
-      # 系统依赖（libgtk / libnss 等）由 Electron 自带的最小集覆盖不全，
-      # 因此这里显式安装运行库，否则窗口起不来、验证会以「渲染进程未启动」失败。
+      # Electron 在无显示服务器的 Linux 上需要 xvfb，
+      # 且 libgtk-3 等运行库不在 runner 的默认镜像里，必须显式安装，
+      # 否则进程起不来、验证会以「渲染进程未启动」失败。
       - name: 安装 Electron 运行库
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-            libgbm1 libasound2t64 libxcomposite1 libxdamage1 libxfixes3 \
-            libxkbcommon0 libxrandr2 libpango-1.0-0 libcairo2
+            xvfb xauth \
+            libgtk-3-0 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libdrm2 libgbm1 libasound2t64 libxcomposite1 libxdamage1 \
+            libxfixes3 libxkbcommon0 libxrandr2 libxshmfence1 \
+            libpango-1.0-0 libcairo2 libatspi2.0-0
+
+      - name: 确保 Electron 二进制已下载
+        run: node node_modules/electron/install.js
 
       - name: 界面验证
         run: xvfb-run --auto-servernum npm run verify:ui 2>&1 | tee verify-output.log
