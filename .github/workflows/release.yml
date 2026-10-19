@@ -135,29 +135,57 @@ jobs:
     name: 发布到 Release
     needs: build
     runs-on: ubuntu-latest
+    # 创建 Release 与上传资产需要写权限；顶层已声明，这里再显式标注一层
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: dist-*
-          merge-multiple: true
 
-      - name: 列出产物
-        run: ls -la artifacts
+      - name: 整理产物到一个目录
+        run: |
+          mkdir -p release
+          find artifacts -type f -maxdepth 2 -exec cp -v {} release/ \;
+          ls -la release
 
       - name: 创建 Release 并上传产物
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           tag="${GITHUB_REF_NAME}"
+          echo "target tag: $tag"
+          ls -la release
+
           # 预发布 tag（-beta / -rc）标记为 prerelease，避免成为默认更新源
-          prerelease=""
+          extra=()
           case "$tag" in
-            *-*) prerelease="--prerelease" ;;
+            *-*) extra+=(--prerelease) ;;
           esac
-          gh release create "$tag" \
-            --title "AutoSign $tag" \
-            --generate-notes \
-            $prerelease \
-            artifacts/* || \
-          gh release upload "$tag" artifacts/* --clobber
+
+          # tag 已由 push 创建，因此直接用 --verify-tag 绑定；
+          # 已存在同名 release 时改为补传资产，保证可重复执行。
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release 已存在，改为补传"
+          else
+            gh release create "$tag" \
+              --verify-tag \
+              --title "AutoSign $tag" \
+              --generate-notes \
+              "${extra[@]}"
+          fi
+
+          # 逐个上传，避免任一文件失败时整批中断后难以定位
+          shopt -s nullglob
+          files=(release/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "没有可上传的产物" >&2
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            echo "upload: $f"
+            gh release upload "$tag" "$f" --clobber
+          done
+
+          gh release view "$tag" --json assets --jq '.assets[].name'
