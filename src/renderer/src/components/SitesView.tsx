@@ -43,6 +43,7 @@ import {
   checkinText,
   describeStatusError,
   isSessionExpired,
+  reloginLabel,
   money,
   timeAgo
 } from '../lib/format'
@@ -622,6 +623,13 @@ export function SitesView(props: Props): React.JSX.Element {
               // 只认今天的回执：过了 0 点，昨天的成功不能算今天已签
               const checkin = checkinText(checked)
               const credential = credentialOf(account.credentialId)
+              // 主进程确认「自动恢复也失败」才会置位；旧数据没有该字段时，
+              // 退回按上次失败原因判断，避免升级后老账号看不到入口
+              const needsRelogin =
+                account.needsRelogin === true ||
+                (account.needsRelogin === undefined &&
+                  status?.ok === false &&
+                  isSessionExpired(status.error))
               return (
                 <div
                   className={
@@ -805,25 +813,32 @@ export function SitesView(props: Props): React.JSX.Element {
                     )}
                   </div>
                   <div className="account-actions">
-                    {/* 会话失效时这是首要动作；平时也保留入口——自动重登失败后
-                        用户必须能找到地方重新登录，不能只依赖状态标签 */}
-                    <button
-                      className={
-                        status && !status.ok && isSessionExpired(status.error)
-                          ? 'btn small primary'
-                          : 'btn small'
-                      }
-                      onClick={() => props.onReauth(site.id, account.id)}
-                      disabled={props.busy.has(`reauth:${account.id}`)}
-                      title={`用 ${site.name} 的登录窗口重新授权此账号`}
-                    >
-                      {props.busy.has(`reauth:${account.id}`) ? (
-                        <RefreshCw size={12} className="rotating" />
-                      ) : (
-                        <LogIn size={12} />
-                      )}
-                      {props.busy.has(`reauth:${account.id}`) ? '授权中' : '重新授权'}
-                    </button>
+                    {/* 只在「自动恢复也失败、确实需要人工登录」时出现。
+                        密码登录的账号没有「授权」这个概念，说「重新登录」才准确；
+                        OAuth 账号才是「重新授权」。 */}
+                    {needsRelogin && (
+                      <button
+                        className="btn small primary"
+                        onClick={() => props.onReauth(site.id, account.id)}
+                        disabled={props.busy.has(`reauth:${account.id}`)}
+                        title={
+                          account.provider === 'password'
+                            ? `用保存的凭据重新登录 ${site.name}`
+                            : `用 ${site.name} 的登录窗口重新授权此账号`
+                        }
+                      >
+                        {props.busy.has(`reauth:${account.id}`) ? (
+                          <RefreshCw size={12} className="rotating" />
+                        ) : (
+                          <LogIn size={12} />
+                        )}
+                        {props.busy.has(`reauth:${account.id}`)
+                          ? account.provider === 'password'
+                            ? '登录中'
+                            : '授权中'
+                          : reloginLabel(account.provider)}
+                      </button>
+                    )}
                     <button
                       className="btn small"
                       onClick={() => props.onRefreshAccount(account.id)}

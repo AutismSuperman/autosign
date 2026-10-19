@@ -110,41 +110,48 @@ export interface RebuildDeps {
  *
  * 顺序很重要，按「打扰用户的程度」从低到高：
  *   1. 密码凭据 → 直接调登录接口（带 Turnstile 时再取令牌）
- *   2. OAuth 凭据 → 先试静默重授权（复用分区里的第三方登录态）
- *   3. 都不行 → 如实返回，由界面提供「重新授权」按钮
+ *   2. OAuth 身份 → 静默重授权（复用分区里的第三方登录态；
+ *      分区登录态也没了就退回凭据里的密码）
+ *   3. 都不行 → 如实返回，由界面提供「重新登录」按钮
  *
- * 只有 3 才需要用户动手。「登录一次之后不用再管」靠的就是 1 和 2。
+ * OAuth 身份**不要求账号绑定凭据**：授权时第三方登录态就落在账号自己的
+ * 分区里，只要那份 Cookie 还在，没有凭据也能静默重新授权一次。
+ * 这与 reloginCapability 的判定必须一致 —— 否则会出现
+ * 「检查说能登回 → 真登出 → 重建却因没有凭据而失败」的掉线路径。
  */
 export async function rebuildSession(
   site: Site,
   account: Account,
   deps: RebuildDeps
 ): Promise<ReloginAttempt> {
-  if (!account.credentialId) {
-    return { ok: false, error: '该账号未关联凭据，需要在站点重新授权一次' }
-  }
-  const credential = deps.findCredential(account.credentialId)
-  if (!credential) {
-    return { ok: false, error: '关联的凭据已被删除，需要在站点重新授权一次' }
-  }
+  const credential = account.credentialId ? deps.findCredential(account.credentialId) : undefined
+  // 凭据被删除时退回账号自身的登录方式，仍有机会靠分区登录态静默重登
+  const provider = credential?.provider ?? account.provider
 
   // OAuth 身份：先尝试静默重授权，分区里的登录态往往还在
-  if (credential.provider && credential.provider !== 'password') {
-    const provider = credential.provider === 'linuxdo' ? 'linuxdo' : 'github'
+  if (provider && provider !== 'password') {
+    const kind = provider === 'linuxdo' ? 'linuxdo' : 'github'
     if (deps.silentReauth) {
-      const silent = await deps.silentReauth(provider)
+      const silent = await deps.silentReauth(kind)
       if (silent.ok) return silent
       return {
         ok: false,
-        error: `${silent.error ?? '静默重授权失败'}。请点「重新授权」手动完成一次`
+        error: `${silent.error ?? '静默重授权失败'}。请点「重新登录」手动完成一次`
       }
     }
     return {
       ok: false,
       error: `会话已过期，该账号用 ${
-        provider === 'github' ? 'GitHub' : 'Linux DO'
-      } 登录，请点「重新授权」完成一次`
+        kind === 'github' ? 'GitHub' : 'Linux DO'
+      } 登录，请点「重新登录」完成一次`
     }
+  }
+
+  if (!account.credentialId) {
+    return { ok: false, error: '该账号未关联凭据，请点「重新登录」手动完成一次' }
+  }
+  if (!credential) {
+    return { ok: false, error: '关联的凭据已被删除，请点「重新登录」手动完成一次' }
   }
 
   if (!credential.password) {

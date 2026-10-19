@@ -92,6 +92,14 @@ export interface Account {
   createdAt: number
   lastCheckin?: CheckinReceipt
   lastStatus?: QuotaSnapshot
+  /**
+   * 会话已确认失效、自动恢复也失败，只能由用户手动登录一次。
+   *
+   * 不用错误文案反推：文案会改，判定会漂移；而且「刷新失败」的原因
+   * 有很多种（风控、限流、网络），只有明确恢复失败才该催用户登录。
+   * 登录/重登成功或额度读取恢复后必须清掉，否则按钮会一直挂着。
+   */
+  needsRelogin?: boolean
 }
 
 export interface CheckinReceipt {

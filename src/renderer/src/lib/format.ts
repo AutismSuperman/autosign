@@ -40,6 +40,16 @@ export function checkinLabel(mode: CheckinMode): string {
   return mode === 'RELOGIN' ? '重登领取' : '签到'
 }
 
+/**
+ * 会话失效后的恢复按钮文案，按登录方式区分。
+ *
+ * 密码登录没有「授权」这一步 —— 对它说「重新授权」会让人以为要跳转第三方，
+ * 实际只是用保存的账号密码重新登录一次。
+ */
+export function reloginLabel(provider: AuthProvider): string {
+  return provider === 'password' ? '重新登录' : '重新授权'
+}
+
 export function money(v: number | undefined): string {
   if (v === undefined) return '—'
   return `$${v.toFixed(2)}`

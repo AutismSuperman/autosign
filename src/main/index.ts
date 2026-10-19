@@ -358,7 +358,18 @@ async function doStatus(accountId: string): Promise<StatusResultDto> {
       snapshot = { ...snapshot, error: `${snapshot.error ?? '会话已失效'}；${rebuilt.error}` }
     }
   }
-  await patchAccount(accountId, { lastStatus: mergeFailedSnapshot(accountId, snapshot) })
+  // 读通了 → 会话可用，清标记；仍是会话失效 → 自动恢复没成功，需要人工登录。
+  // 其它失败（风控/网络/限流）不动这个标记：它和会话是否有效无关。
+  const reloginPatch =
+    snapshot.ok === true
+      ? { needsRelogin: false }
+      : isSessionExpired(snapshot.error)
+        ? { needsRelogin: true }
+        : {}
+  await patchAccount(accountId, {
+    lastStatus: mergeFailedSnapshot(accountId, snapshot),
+    ...reloginPatch
+  })
   await syncCheckinReceipt(hit.site, accountId, snapshot)
   store.log(
     snapshot.ok ? 'ok' : 'warn',
@@ -469,6 +480,8 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
 
     if (result.ok) {
       await patchAccount(accountId, {
+        // 重登成功即证明会话可用：清掉「需要手动登录」标记
+        needsRelogin: false,
         lastCheckin: {
           at: Date.now(),
           date: rewardDate(Date.now()),
@@ -479,10 +492,11 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
         }
       })
     } else if (result.needVisible) {
-      // 确实需要人工处理：把原因写进 lastStatus，账号行才会出现「重新授权」入口。
+      // 确实需要人工处理：置 needsRelogin，界面据此显示「重新登录」入口。
       // 保留上一次的额度数字（会话失效不等于余额归零），但要如实标出失败。
       const prev = store.findAccount(accountId)?.lastStatus
       await patchAccount(accountId, {
+        needsRelogin: true,
         lastStatus: {
           at: Date.now(),
           ok: false,
@@ -527,10 +541,16 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
   if (result.receipt) {
     await patchAccount(accountId, { lastCheckin: result.receipt })
   }
+  // 签到成功说明会话可用：清掉可能残留的「需要手动登录」标记
+  if (result.ok) {
+    await patchAccount(accountId, { needsRelogin: false })
+  }
   // 签到失败且是会话类问题时，同步把状态标成失败：
   // 否则账号行仍显示上次成功的旧额度，看起来一切正常，实际早已失效。
+  // 自动重建也失败时才需要人工登录，因此重建成功则不置位。
   if (!result.ok && isSessionExpired(result.message)) {
     await patchAccount(accountId, {
+      needsRelogin: true,
       lastStatus: {
         at: Date.now(),
         ok: false,
@@ -818,7 +838,8 @@ function registerIpc(): void {
         const freshAccount = store.findAccount(account.id) ?? account
         const snapshot = await readStatus(site, freshAccount, { proxy })
         if (snapshot.ok) {
-          await patchAccount(account.id, { lastStatus: snapshot })
+          // 重新登录成功：清掉「需要手动登录」标记
+          await patchAccount(account.id, { lastStatus: snapshot, needsRelogin: false })
           await syncCheckinReceipt(site, account.id, snapshot)
           store.log('ok', '授权', `${site.name}：已通过密码登录 ${account.label}`, { siteId })
         } else {
@@ -886,7 +907,8 @@ function registerIpc(): void {
       const freshAccount = store.findAccount(account.id) ?? account
       const snapshot = await readStatus(site, freshAccount, { proxy })
       if (snapshot.ok) {
-        await patchAccount(account.id, { lastStatus: snapshot })
+        // 重新授权成功：清掉「需要手动登录」标记
+        await patchAccount(account.id, { lastStatus: snapshot, needsRelogin: false })
         await syncCheckinReceipt(site, account.id, snapshot)
         store.log('ok', '授权', `${site.name}：已登录 ${account.label}`, { siteId })
       } else {

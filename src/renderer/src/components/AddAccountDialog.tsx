@@ -36,6 +36,8 @@ export function AddAccountDialog({
     ? site.accounts.find((a) => a.id === reauthAccountId)
     : undefined
   const reauth = !!reauthAccount
+  // 密码登录没有「授权」：对它说「重新授权」会让人以为要跳转第三方
+  const reauthWord = reauthAccount?.provider === 'password' ? '重新登录' : '重新授权'
   // 密码登录是 New API 系的标准能力，所有 NEWAPI 站点都提供
   const providers: AuthProvider[] =
     site.kind === 'NEWAPI' ? ['github', 'linuxdo', 'password'] : ['github']
@@ -81,14 +83,16 @@ export function AddAccountDialog({
 
   return (
     <Modal
-      title={reauth ? `重新授权 · ${reauthAccount?.label ?? site.name}` : `添加账号 · ${site.name}`}
+      title={reauth ? `${reauthWord} · ${reauthAccount?.label ?? site.name}` : `添加账号 · ${site.name}`}
       onClose={onClose}
       onSubmit={submit}
       submitDisabled={!canSubmit}
     >
       {reauth && (
         <div className="hint" style={{ marginBottom: 12 }}>
-          当前账号的会话已失效。完成一次登录即可替换它的会话，
+          {reauthWord === '重新登录'
+            ? '当前账号的会话已失效。用保存的凭据重新登录一次即可恢复，'
+            : '当前账号的会话已失效。完成一次登录即可替换它的会话，'}
           账号本身与历史记录都会保留。
         </div>
       )}

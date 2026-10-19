@@ -1,14 +1,14 @@
 /**
- * 账号行「重新授权」入口的验证。
+ * 账号行「重新登录 / 重新授权」入口的验证。
  *
  * 起因：AgentRouter 的 GitHub 账号签到失败后提示「需要在应用内重新登录」，
- * 但界面上任何地方都找不到重新登录的入口 —— 重授权按钮只在
- * 「lastStatus 失败且错误文案被识别为会话失效」时才渲染，签到这个动作
- * 本身并没有写 lastStatus，于是按钮不出现。
+ * 但界面上任何地方都找不到入口 —— 按钮只在错误文案被识别为会话失效时
+ * 渲染，而签到这个动作当时根本不写 lastStatus。
  *
- * 这里锁住两条不变量：
- *   1. 每个账号行始终有「重新授权」入口，不依赖当前状态
- *   2. 会话失效的账号把该按钮升级为主按钮，优先于「刷新额度」
+ * 修好入口后又要避免走到另一个极端：不能无脑给所有账号挂按钮。
+ * 因此这里同时锁住「该出现」与「不该出现」两侧，以及文案要按登录方式区分：
+ *   - 密码登录没有「授权」这一步，应显示「重新登录」
+ *   - GitHub / Linux DO 走 OAuth，显示「重新授权」
  *
  * 演示数据全部使用 example.com 与 demo-user，不含真实账号。
  *
@@ -28,13 +28,14 @@ rmSync(userData, { recursive: true, force: true })
 mkdirSync(userData, { recursive: true })
 
 const now = Date.now()
-const account = (id, label, lastStatus) => ({
+const account = (id, label, provider, lastStatus, needsRelogin) => ({
   id,
   siteId: 'demo-site',
   label,
-  provider: 'github',
+  provider,
   createdAt: now,
-  lastStatus
+  lastStatus,
+  ...(needsRelogin === undefined ? {} : { needsRelogin })
 })
 
 const demoConfig = {
@@ -48,21 +49,47 @@ const demoConfig = {
       kind: 'NEWAPI',
       provider: 'github',
       accounts: [
-        // 健康账号：状态正常，仍然要有重授权入口
-        account('a1', 'demo-user-01', { at: now - 60_000, ok: true, available: 100, used: 10 }),
-        // 会话失效账号：按钮应升级为主按钮
-        account('a2', 'demo-user-02', {
+        // 健康账号：不该出现恢复入口
+        account(
+          'a1',
+          'demo-user-01',
+          'github',
+          { at: now - 60_000, ok: true, available: 100, used: 10 },
+          false
+        ),
+        // GitHub 会话失效：需要「重新授权」
+        account(
+          'a2',
+          'demo-user-02',
+          'github',
+          { at: now - 60_000, ok: false, available: 50, used: 5, error: '会话已失效，需要重新授权' },
+          true
+        ),
+        // 密码会话失效：需要的是「重新登录」，不是「重新授权」
+        account(
+          'a3',
+          'demo-user-03',
+          'password',
+          { at: now - 60_000, ok: false, error: '会话已失效，需要重新授权' },
+          true
+        ),
+        // 普通失败（风控）：不是会话问题，不该出现恢复入口
+        account(
+          'a4',
+          'demo-user-04',
+          'github',
+          {
+            at: now - 60_000,
+            ok: false,
+            error: '站点防护拦截（当前代理节点被风控），请更换节点后重试'
+          },
+          false
+        ),
+        // 旧数据：没有 needsRelogin 字段，但上次失败是会话失效 → 仍应出现
+        account('a5', 'demo-user-05', 'github', {
           at: now - 60_000,
           ok: false,
-          available: 50,
-          used: 5,
-          error: '需要重新授权：分区内没有 GitHub 登录态，且凭据未保存密码（本次未登出，账号仍保持原状）'
-        }),
-        // 普通失败（网络/风控）：按钮照旧存在，但不应升级成主按钮
-        account('a3', 'demo-user-03', {
-          at: now - 60_000,
-          ok: false,
-          error: '站点防护拦截（当前代理节点被风控），请更换节点后重试'
+          error: '会话已失效，需要重新授权'
         })
       ]
     }
@@ -134,59 +161,81 @@ const rows = JSON.parse(
     }))
     return {
       label: row.querySelector('.account-label')?.firstChild?.textContent?.trim() || '',
-      reauth: btns.find(b => b.text.includes('重新授权')) || null,
-      tags: [...row.querySelectorAll('.tag')].map(t => (t.textContent || '').trim())
+      actions: btns,
+      relogin: btns.find(b => /重新登录|重新授权/.test(b.text)) || null
     }
   }))`)
 )
 
-ck('三个演示账号都渲染出来', rows.length === 3, `${rows.length} 行`)
+ck('五个演示账号都渲染出来', rows.length === 5, `${rows.length} 行`)
 
-const healthy = rows.find((r) => r.label.startsWith('demo-user-01'))
-const expired = rows.find((r) => r.label.startsWith('demo-user-02'))
-const otherFail = rows.find((r) => r.label.startsWith('demo-user-03'))
+const byLabel = (n) => rows.find((r) => r.label.startsWith(`demo-user-0${n}`))
 
-ck('状态正常的账号也有重新授权入口', !!healthy?.reauth, healthy ? String(!!healthy.reauth) : '账号缺失')
-ck('会话失效的账号有重新授权入口', !!expired?.reauth, expired ? String(!!expired.reauth) : '账号缺失')
-ck('普通失败的账号也有重新授权入口', !!otherFail?.reauth, otherFail ? String(!!otherFail.reauth) : '账号缺失')
+// ---- 不该出现的一侧：不能无脑给所有账号挂按钮 ----
+ck('状态正常的账号没有恢复入口', byLabel(1)?.relogin === null, JSON.stringify(byLabel(1)?.actions))
+ck('风控失败的账号没有恢复入口', byLabel(4)?.relogin === null, JSON.stringify(byLabel(4)?.actions))
 
+// ---- 该出现的一侧 ----
+ck('GitHub 会话失效有恢复入口', !!byLabel(2)?.relogin, JSON.stringify(byLabel(2)?.actions))
+ck('密码会话失效有恢复入口', !!byLabel(3)?.relogin, JSON.stringify(byLabel(3)?.actions))
 ck(
-  '会话失效时重新授权是主按钮（比刷新额度更显眼）',
-  expired?.reauth?.primary === true,
-  expired ? `primary=${expired.reauth?.primary}` : '账号缺失'
-)
-ck(
-  '普通失败时重新授权不抢主按钮（签到仍是主动作）',
-  otherFail?.reauth?.primary === false,
-  otherFail ? `primary=${otherFail.reauth?.primary}` : '账号缺失'
-)
-ck(
-  '健康账号的重新授权是次要样式',
-  healthy?.reauth?.primary === false,
-  healthy ? `primary=${healthy.reauth?.primary}` : '账号缺失'
-)
-ck(
-  '会话失效的账号标出「需重新授权」',
-  (expired?.tags ?? []).some((t) => t.includes('重新授权')),
-  (expired?.tags ?? []).join(' / ')
+  '旧数据（无 needsRelogin 字段）仍能回退识别',
+  !!byLabel(5)?.relogin,
+  JSON.stringify(byLabel(5)?.actions)
 )
 
-// 点击入口应打开重授权对话框，而不是「添加账号」
+// ---- 文案要按登录方式区分 ----
+ck(
+  'GitHub 账号显示「重新授权」',
+  byLabel(2)?.relogin?.text === '重新授权',
+  byLabel(2)?.relogin?.text
+)
+ck(
+  '密码账号显示「重新登录」而不是「重新授权」',
+  byLabel(3)?.relogin?.text === '重新登录',
+  byLabel(3)?.relogin?.text
+)
+
+// ---- 恢复入口是主按钮，排在刷新/签到之前 ----
+ck('恢复入口是主按钮', byLabel(2)?.relogin?.primary === true, String(byLabel(2)?.relogin?.primary))
+ck(
+  '恢复入口排在刷新额度之前',
+  (() => {
+    const list = byLabel(2)?.actions ?? []
+    const reloginIdx = list.findIndex((a) => /重新登录|重新授权/.test(a.text))
+    const refreshIdx = list.findIndex((a) => a.text.includes('刷新额度'))
+    return reloginIdx >= 0 && refreshIdx > reloginIdx
+  })(),
+  (byLabel(2)?.actions ?? []).map((a) => a.text).join(' / ')
+)
+
+// ---- 点击入口打开的是重授权对话框，且文案跟随账号类型 ----
 await ev(`(() => {
   const row = [...document.querySelectorAll('.account-row')].find(r =>
     (r.querySelector('.account-label')?.textContent || '').includes('demo-user-02'))
   const btn = [...row.querySelectorAll('.account-actions .btn')].find(b =>
-    (b.textContent || '').includes('重新授权'))
+    /重新登录|重新授权/.test(b.textContent || ''))
   btn.click()
 })()`)
 await sleep(900)
-const dialogTitle = (await ev(`document.querySelector('.modal h2')?.textContent || ''`)) ?? ''
-ck('点击后打开重授权对话框（不是新增账号）', dialogTitle.includes('重新授权'), dialogTitle)
-ck(
-  '对话框说明账号与历史记录会保留',
-  (await ev(`document.querySelector('.modal .hint')?.textContent || ''`)).includes('历史记录'),
-  await ev(`document.querySelector('.modal .hint')?.textContent || ''`)
-)
+const ghTitle = (await ev(`document.querySelector('.modal h2')?.textContent || ''`)) ?? ''
+ck('GitHub 账号打开「重新授权」对话框', ghTitle.includes('重新授权'), ghTitle)
+
+await ev(`document.querySelector('.modal-actions .btn:not(.primary)')?.click()`)
+await sleep(500)
+
+await ev(`(() => {
+  const row = [...document.querySelectorAll('.account-row')].find(r =>
+    (r.querySelector('.account-label')?.textContent || '').includes('demo-user-03'))
+  const btn = [...row.querySelectorAll('.account-actions .btn')].find(b =>
+    /重新登录|重新授权/.test(b.textContent || ''))
+  btn.click()
+})()`)
+await sleep(900)
+const pwTitle = (await ev(`document.querySelector('.modal h2')?.textContent || ''`)) ?? ''
+ck('密码账号打开「重新登录」对话框', pwTitle.includes('重新登录'), pwTitle)
+const pwHint = (await ev(`document.querySelector('.modal .hint')?.textContent || ''`)) ?? ''
+ck('密码账号对话框不出现「授权」字样', !pwHint.includes('授权'), pwHint)
 
 const failedCount = checks.filter((x) => !x).length
 console.log(`\n${failedCount === 0 ? 'ALL PASS' : `${failedCount} FAILED`} (${checks.length} checks)`)

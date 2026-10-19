@@ -187,7 +187,9 @@ export function App(): React.JSX.Element {
         if (result.ok) {
           showToast(
             reauthAccountId
-              ? '已重新授权，会话已更新'
+              ? result.account?.provider === 'password'
+                ? '已重新登录，会话已更新'
+                : '已重新授权，会话已更新'
               : `已登录${result.account ? `：${maskRef.current ? '账号已打码' : result.account.label}` : ''}`,
             'success'
           )
