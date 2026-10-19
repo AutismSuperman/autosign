@@ -7,6 +7,8 @@ on:
   push:
     tags:
       - 'v*'
+  # 手动触发：用于验证 CI 配置本身，不会发布 release
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -20,9 +22,9 @@ jobs:
     name: 验证
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -68,9 +70,9 @@ jobs:
           - os: ubuntu-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
