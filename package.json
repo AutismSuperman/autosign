@@ -1,0 +1,71 @@
+{
+  "name": "autosign-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "桌面端公益 AI 中转站自动签到与额度管理",
+  "author": "AutoSign Desktop",
+  "license": "AGPL-3.0-or-later",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "npm run typecheck && electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "start": "electron-vite preview",
+    "smoke": "npm run build && node scripts/smoke.mjs",
+    "test": "node tests/totp.test.mjs && node tests/session.test.mjs && node tests/relogin.test.mjs && node tests/checkin-reconcile.test.mjs && node tests/checkin-display.test.mjs && node tests/relogin-session.test.mjs && node tests/session-partition.test.mjs && node tests/api-keys.test.mjs && node tests/waf-detect.test.mjs",
+    "dist": "npm run build && electron-builder",
+    "dist:dir": "npm run build && electron-builder --dir",
+    "verify:ui": "node scripts/verify-ui.mjs",
+    "test:net": "node tests/password-login.test.mjs"
+  },
+  "dependencies": {
+    "https-proxy-agent": "^7.0.6",
+    "lucide-react": "^1.59.0",
+    "socks-proxy-agent": "^8.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7"
+  },
+  "build": {
+    "appId": "icu.autosign.desktop",
+    "productName": "AutoSign",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "resources/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.icns"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png"
+    }
+  }
+}

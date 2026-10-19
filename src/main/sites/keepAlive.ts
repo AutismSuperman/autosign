@@ -1,0 +1,77 @@
+import type { Site } from '../../shared/types'
+import { needsRefresh, renewToken } from './session'
+import type { SessionDeps } from './session'
+
+/**
+ * 会话保活。
+ *
+ * 背景：New API 的 access_token 只有 15 分钟有效期。如果等到读额度时才
+ * 发现过期，每次都要「请求 → 401 → 续期 → 重试」，既慢又容易在续期失败的
+ * 瞬间被判定为会话失效。上游 autosign 的做法是定期主动续期，让会话始终有效。
+ *
+ * 这里在应用运行期间每隔一段时间扫一遍账号：
+ *   - token 快过期（< 5 分钟）→ 主动续期
+ *   - cookie 类会话（无 token）→ 不发请求，避免无意义流量
+ *   - 续期失败不做任何破坏性处理，交给下次业务请求如实报错
+ *
+ * 只处理 NEWAPI 系站点：其它形态没有 refresh 端点，续期无意义。
+ */
+
+/** 扫描间隔：5 分钟。比 15 分钟的 token 寿命短得多，足够在过期前续上。 */
+const KEEPALIVE_INTERVAL_MS = 5 * 60_000
+
+export interface KeepAliveDeps {
+  proxy: () => Promise<string>
+  sites: () => Site[]
+  sessionFor: (siteId: string, accountId: string, proxy: string) => SessionDeps
+  log: (message: string) => void
+}
+
+/** 扫一遍所有账号，把快过期的令牌续掉。返回续期成功的数量。 */
+export async function keepAliveOnce(deps: KeepAliveDeps): Promise<{ renewed: number; total: number }> {
+  let renewed = 0
+  let total = 0
+  const proxy = await deps.proxy()
+
+  for (const site of deps.sites()) {
+    for (const account of site.accounts) {
+      if (!account.token && !account.cookie) continue
+      // 只有带 cookie 的账号才可能续期；纯 token 无 refresh 通道
+      if (!account.cookie) continue
+      total++
+      if (!needsRefresh(account.token)) continue
+      try {
+        const token = await renewToken(site, account, deps.sessionFor(site.id, account.id, proxy), false)
+        if (token) renewed++
+      } catch {
+        // 单个账号续期失败不影响其它账号
+      }
+    }
+  }
+  return { renewed, total }
+}
+
+/** 启动保活定时器。返回停止函数。 */
+export function startKeepAlive(deps: KeepAliveDeps): () => void {
+  let stopped = false
+
+  const tick = async (): Promise<void> => {
+    if (stopped) return
+    try {
+      const r = await keepAliveOnce(deps)
+      if (r.renewed > 0) deps.log(`会话保活：已续期 ${r.renewed} / ${r.total} 个账号`)
+    } catch {
+      // 保活失败是静默的，不影响主流程
+    }
+  }
+
+  // 启动后先跑一次，收掉已有快过期的令牌
+  void tick()
+  const timer = setInterval(() => void tick(), KEEPALIVE_INTERVAL_MS)
+  timer.unref?.()
+
+  return () => {
+    stopped = true
+    clearInterval(timer)
+  }
+}

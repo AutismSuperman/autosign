@@ -1,0 +1,32 @@
+node_modules/
+out/
+dist/
+.smoke-user-data/
+.verify-user-data/
+.ui-user-data/
+.reorder-user-data/
+.shot-ud/
+.demo-ud/
+.shot-ui/
+.shot-ui-data/
+
+# 截图与临时调试脚本（应用图标除外）
+*.png
+!build/icon.png
+!resources/icon.png
+.shot.mjs
+.tmp/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.tsbuildinfo
+
+# 调研阶段产物：上游仓库快照与本机可行性实验脚本，不进入本工程
+repo/
+probe/
+
+# 截图与工具产生的临时目录
+.shot-ud*/
+.zcode/
