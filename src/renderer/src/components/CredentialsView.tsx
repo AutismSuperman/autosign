@@ -6,12 +6,14 @@ import { Select } from './Select'
 import { useConfirm } from './ConfirmDialog'
 import type { ToastKind } from './Toast'
 import { copyText } from '../lib/clipboard'
-import { providerAvatar, providerLabel, timeAgo } from '../lib/format'
+import { maskIdentifier, providerAvatar, providerLabel, timeAgo } from '../lib/format'
 
 interface Props {
   onToast: (message: string, kind?: ToastKind) => void
   /** 凭据数量变化时通知外层刷新（站点卡片要用它显示可选身份）。 */
   onChanged?: () => void
+  /** 账号打码：开启后用户名等身份信息以掩码显示。 */
+  maskAccounts?: boolean
 }
 
 /** 筛选维度：登录方式与密码/TOTP 是否已保存。 */
@@ -61,7 +63,10 @@ const EMPTY: Draft = {
  * 密码与 TOTP 一旦保存就无法再读出（只显示「已保存」），
  * 这与系统密钥加密的语义一致：加密后只有主进程能解开，界面拿不到原文。
  */
-export function CredentialsView({ onToast, onChanged }: Props): React.JSX.Element {
+export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): React.JSX.Element {
+  /** 身份信息的统一展示出口：开启打码后所有用户名都经过它。 */
+  const show = (value: string | undefined | null): string =>
+    maskAccounts ? maskIdentifier(value) : (value ?? '')
   const [list, setList] = useState<PublicCredential[]>([])
   const [draft, setDraft] = useState<Draft | null>(null)
   const [saving, setSaving] = useState(false)
@@ -159,7 +164,7 @@ export function CredentialsView({ onToast, onChanged }: Props): React.JSX.Elemen
       confirmLabel: '删除',
       message: (
         <>
-          将删除凭据 <b>{c.displayName || c.username}</b>（{providerLabel(c.provider)}）。
+          将删除凭据 <b>{show(c.displayName || c.username)}</b>（{providerLabel(c.provider)}）。
           已登录的站点会话不受影响，但之后无法再用它自动登录。
         </>
       )
@@ -167,7 +172,7 @@ export function CredentialsView({ onToast, onChanged }: Props): React.JSX.Elemen
     if (!ok) return
     setList(await window.api.credential.remove(c.id))
     onChanged?.()
-    onToast(`已删除 ${c.displayName || c.username}`, 'success')
+    onToast(`已删除 ${show(c.displayName || c.username)}`, 'success')
   }
 
   const copy = async (text: string, what: string): Promise<void> => {
@@ -276,18 +281,18 @@ export function CredentialsView({ onToast, onChanged }: Props): React.JSX.Elemen
                 <div className="cred-main">
                   <div className="cred-name">
                     <span className="cred-name-row">
-                      {c.displayName || c.username}
+                      {show(c.displayName || c.username)}
                       <button
                         className="icon-btn tiny"
                         onClick={() => void copy(c.username, '用户名')}
-                        title="复制用户名"
+                        title={maskAccounts ? '复制用户名（仍复制真实值）' : '复制用户名'}
                       >
                         <Copy size={12} />
                       </button>
                     </span>
                     <span className="tag">{providerLabel(c.provider)}</span>
                     {/* 显示名称与登录用户名不同时，把用户名也标出来，避免认错身份 */}
-                    {c.displayName && <span className="cred-username">{c.username}</span>}
+                    {c.displayName && <span className="cred-username">{show(c.username)}</span>}
                     {c.note && <span className="cred-note">{c.note}</span>}
                   </div>
                   <div className="cred-meta">

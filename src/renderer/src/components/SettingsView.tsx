@@ -256,6 +256,23 @@ export function SettingsView(props: Props): React.JSX.Element {
             </div>
           </div>
           <div className="field">
+            <div className="field-label">账号打码</div>
+            <div className="field-body">
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={settings.maskAccounts}
+                  onChange={(e) => void props.onChange({ maskAccounts: e.target.checked })}
+                />
+                隐藏账号与邮箱
+              </label>
+              <span className="field-hint">
+                开启后账号名、登录账号与凭据用户名只显示首尾字符，
+                日志里的账号标识同样会被遮住，方便截图分享。站点名不受影响。
+              </span>
+            </div>
+          </div>
+          <div className="field">
             <div className="field-label">关闭窗口</div>
             <div className="field-body">
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--text-dim)' }}>

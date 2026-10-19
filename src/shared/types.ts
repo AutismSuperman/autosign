@@ -214,6 +214,8 @@ export interface Settings {
   accountSort: AccountSort
   /** 账号列表排序方向（金额默认降序，名称默认升序）。 */
   accountSortDir: SortDirection
+  /** 账号打码：开启后账号名、登录邮箱等身份信息在界面上以掩码显示。 */
+  maskAccounts: boolean
 }
 
 export interface AppConfig {

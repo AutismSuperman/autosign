@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import type { AppConfig, AuthProvider, LogEntry, Site } from '@shared/types'
 import { Sidebar } from './components/Sidebar'
@@ -11,6 +11,7 @@ import { AddAccountDialog } from './components/AddAccountDialog'
 import { ToastHost, useToasts } from './components/Toast'
 import { applyTheme, watchSystemTheme } from './lib/theme'
 import { sortSites } from './lib/sort'
+import { maskIdentifier } from './lib/format'
 
 export type ViewKey = 'sites' | 'credentials' | 'logs' | 'settings'
 
@@ -60,6 +61,17 @@ export function App(): React.JSX.Element {
     current: string
   } | null>(null)
   const { toasts, showToast, dismiss } = useToasts()
+
+  /**
+   * 账号名展示口径：开启打码后批量进度里的账号名也要遮住。
+   * 用 ref 读取最新值，避免把设置塞进各个 useCallback 的依赖里。
+   */
+  const maskRef = useRef(false)
+  maskRef.current = config?.settings.maskAccounts ?? false
+  const maskAccount = useCallback(
+    (label: string): string => (maskRef.current ? maskIdentifier(label) : label),
+    []
+  )
 
   const refresh = useCallback(async () => {
     setConfig(await window.api.config.get())
@@ -174,7 +186,7 @@ export function App(): React.JSX.Element {
           showToast(
             reauthAccountId
               ? '已重新授权，会话已更新'
-              : `已登录${result.account ? `：${result.account.label}` : ''}`,
+              : `已登录${result.account ? `：${maskAccount(result.account.label)}` : ''}`,
             'success'
           )
         } else {
@@ -184,7 +196,7 @@ export function App(): React.JSX.Element {
         endBusy(key)
       }
     },
-    [refresh, showToast, beginBusy, endBusy]
+    [refresh, showToast, beginBusy, endBusy, maskAccount]
   )
 
   const refreshAccount = useCallback(
@@ -257,7 +269,7 @@ export function App(): React.JSX.Element {
           kind: 'checkin',
           done: i,
           total: targets.length,
-          current: `${t.siteName} / ${t.account.label}`
+          current: `${t.siteName} / ${maskAccount(t.account.label)}`
         })
         // 让该行也能显示自己的处理中状态
         beginBusy(`checkin:${t.account.id}`)
@@ -279,7 +291,7 @@ export function App(): React.JSX.Element {
       setBatchProgress(null)
       await refresh()
     }
-  }, [scopeSites, activeSiteId, refresh, showToast, beginBusy, endBusy])
+  }, [scopeSites, activeSiteId, refresh, showToast, beginBusy, endBusy, maskAccount])
 
   /**
    * 刷新额度：和批量签到一样逐账号串行，并把进度显示出来。
@@ -304,7 +316,7 @@ export function App(): React.JSX.Element {
           kind: 'refresh',
           done: i,
           total: targets.length,
-          current: `${t.siteName} / ${t.account.label}`
+          current: `${t.siteName} / ${maskAccount(t.account.label)}`
         })
         beginBusy(`status:${t.account.id}`)
         try {
@@ -325,7 +337,7 @@ export function App(): React.JSX.Element {
       setBatchProgress(null)
       await refresh()
     }
-  }, [scopeSites, refresh, showToast, beginBusy, endBusy])
+  }, [scopeSites, refresh, showToast, beginBusy, endBusy, maskAccount])
 
   const removeAccount = useCallback(
     async (accountId: string) => {
@@ -421,6 +433,10 @@ export function App(): React.JSX.Element {
             siteSortDir={config.settings.siteSortDir}
             accountSort={config.settings.accountSort}
             accountSortDir={config.settings.accountSortDir}
+            maskAccounts={config.settings.maskAccounts}
+            onToggleMask={() =>
+              void updateSettings({ maskAccounts: !config.settings.maskAccounts })
+            }
             onAccountSortChange={(sort, dir) =>
               void updateSettings({ accountSort: sort, accountSortDir: dir })
             }
@@ -443,9 +459,13 @@ export function App(): React.JSX.Element {
           />
         )}
         {view === 'credentials' && (
-          <CredentialsView onToast={showToast} onChanged={refresh} />
+          <CredentialsView
+            onToast={showToast}
+            onChanged={refresh}
+            maskAccounts={config.settings.maskAccounts}
+          />
         )}
-        {view === 'logs' && <LogsView logs={logs} sites={config.sites} onReload={loadLogs} onClear={async () => {
+        {view === 'logs' && <LogsView logs={logs} sites={config.sites} maskAccounts={config.settings.maskAccounts} onReload={loadLogs} onClear={async () => {
           await window.api.logs.clear()
           await loadLogs()
           showToast('日志已清空', 'success')

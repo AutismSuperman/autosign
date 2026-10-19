@@ -53,7 +53,8 @@ function defaultSettings(): Settings {
     siteSort: 'custom',
     siteSortDir: 'desc',
     accountSort: 'custom',
-    accountSortDir: 'desc'
+    accountSortDir: 'desc',
+    maskAccounts: false
   }
 }
 

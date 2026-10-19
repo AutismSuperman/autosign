@@ -13,11 +13,14 @@ import {
 } from 'lucide-react'
 import type { LogEntry, LogLevel, Site } from '@shared/types'
 import { useConfirm } from './ConfirmDialog'
+import { maskIdentifier, maskLogMessage } from '../lib/format'
 
 interface Props {
   logs: LogEntry[]
   /** 站点与账号：把日志里的 id 翻成可读名称。 */
   sites: Site[]
+  /** 账号打码：日志正文里出现的账号标识同样遮住。 */
+  maskAccounts?: boolean
   onReload: () => void
   onClear: () => void
 }
@@ -58,7 +61,7 @@ const FILTERS: Array<{ key: LevelFilter; label: string }> = [
 ]
 
 /** 运行日志。detail 中不包含任何凭据原文（主进程写日志前已脱敏）。 */
-export function LogsView({ logs, sites, onReload, onClear }: Props): React.JSX.Element {
+export function LogsView({ logs, sites, maskAccounts, onReload, onClear }: Props): React.JSX.Element {
   const [level, setLevel] = useState<LevelFilter>('all')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
@@ -101,6 +104,24 @@ export function LogsView({ logs, sites, onReload, onClear }: Props): React.JSX.E
     })
   }
 
+  /**
+   * 打码用的身份清单。
+   *
+   * 日志正文是主进程拼好的整句，无法从文本判断哪一段是账号，
+   * 因此收集所有账号名与站点名，按字面量替换。站点名不在其中——
+   * 站点不是身份信息，保留后日志仍然可读。
+   */
+  const identifiers = useMemo(() => {
+    if (!maskAccounts) return []
+    return sites.flatMap((s) => s.accounts.map((a) => a.label))
+  }, [sites, maskAccounts])
+
+  const display = useMemo(
+    () => (text: string): string =>
+      maskAccounts ? maskLogMessage(text, identifiers, maskIdentifier) : text,
+    [maskAccounts, identifiers]
+  )
+
   /** 日志只记 id，展开详情时翻成名称；找不到时退回 id，不让详情空着。 */
   const siteNameOf = (siteId: string): string =>
     sites.find((s) => s.id === siteId)?.name ?? siteId
@@ -108,7 +129,7 @@ export function LogsView({ logs, sites, onReload, onClear }: Props): React.JSX.E
   const accountLabelOf = (accountId: string): string => {
     for (const site of sites) {
       const hit = site.accounts.find((a) => a.id === accountId)
-      if (hit) return `${hit.label}（${site.name}）`
+      if (hit) return `${display(hit.label)}（${site.name}）`
     }
     return accountId
   }
@@ -196,8 +217,8 @@ export function LogsView({ logs, sites, onReload, onClear }: Props): React.JSX.E
                   {log.scope}
                 </span>
                 <span className="log-msg">
-                  {log.message}
-                  {log.detail && <div className="log-detail">{log.detail}</div>}
+                  {display(log.message)}
+                  {log.detail && <div className="log-detail">{display(log.detail)}</div>}
                   {open && (
                     <div className="log-extra">
                       <div>
@@ -227,7 +248,7 @@ export function LogsView({ logs, sites, onReload, onClear }: Props): React.JSX.E
                       {log.detail && (
                         <div>
                           <span className="log-extra-key">详情</span>
-                          {log.detail}
+                          {display(log.detail)}
                         </div>
                       )}
                     </div>

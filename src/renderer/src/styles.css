@@ -269,6 +269,13 @@ input:focus-visible {
   background: transparent;
 }
 
+/* 开关型按钮的激活态：打码开启时用强调色描边，一眼看出当前状态 */
+.btn.active {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-soft);
+}
+
 .btn.small {
   padding: 4px 9px;
   font-size: 12px;

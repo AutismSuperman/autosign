@@ -42,6 +42,7 @@ import {
   checkinText,
   describeStatusError,
   isSessionExpired,
+  maskIdentifier,
   money,
   timeAgo
 } from '../lib/format'
@@ -71,6 +72,9 @@ interface Props {
   siteSortDir: SortDirection
   accountSort: AccountSort
   accountSortDir: SortDirection
+  /** 账号打码：开启后账号名与登录账号以掩码显示。 */
+  maskAccounts: boolean
+  onToggleMask: () => void
   onAccountSortChange: (sort: AccountSort, dir: SortDirection) => void
   onAddSite: () => void
   onLogin: (siteId: string) => void
@@ -103,6 +107,9 @@ function SiteAvatar({ site }: { site: Site }): React.JSX.Element {
 /** 站点与账号主视图。 */
 export function SitesView(props: Props): React.JSX.Element {
   const { allSites } = props
+  /** 账号信息的统一展示出口：开启打码后所有身份文本都经过它。 */
+  const show = (value: string | undefined | null): string =>
+    props.maskAccounts ? maskIdentifier(value) : (value ?? '')
   const totalAccounts = allSites.reduce((n, s) => n + s.accounts.length, 0)
   const [dragId, setDragId] = useState<string | null>(null)
   /** 正在拖拽的账号 id，用于站点内账号排序。 */
@@ -271,7 +278,7 @@ export function SitesView(props: Props): React.JSX.Element {
       confirmLabel: '移除',
       message: (
         <>
-          将移除 <b>{site.name}</b> 上的账号 <b>{label}</b> 的会话，登录凭据不受影响。
+          将移除 <b>{site.name}</b> 上的账号 <b>{show(label)}</b> 的会话，登录凭据不受影响。
         </>
       )
     })
@@ -311,6 +318,16 @@ export function SitesView(props: Props): React.JSX.Element {
           aria-label="检索站点或账号"
         />
       </div>
+      {/* 打码开关：截图或给他人看界面时一键遮住账号身份 */}
+      <button
+        className={props.maskAccounts ? 'btn active' : 'btn'}
+        onClick={() => props.onToggleMask()}
+        title={props.maskAccounts ? '关闭账号打码' : '隐藏账号与邮箱，便于截图分享'}
+        aria-pressed={props.maskAccounts}
+      >
+        {props.maskAccounts ? <EyeOff size={14} /> : <Eye size={14} />}
+        {props.maskAccounts ? '已打码' : '打码'}
+      </button>
       {/* 文案随范围变化，避免在单站点视图里误以为会处理全部站点 */}
       <button
         className="btn"
@@ -569,18 +586,22 @@ export function SitesView(props: Props): React.JSX.Element {
                   </span>
                   <div className="account-main">
                     <div className="account-label">
-                      {account.label}
+                      {show(account.label)}
                       <span className="tag">{PROVIDER_SHORT[account.provider] ?? account.provider}</span>
                       {credential ? (
                         <span
                           className="tag login-id"
-                          title={`本账号由以下凭据登录：${
-                            credential.displayName
-                              ? `${credential.displayName}（${credential.username}）`
-                              : credential.username
-                          }`}
+                          title={
+                            props.maskAccounts
+                              ? '账号打码已开启'
+                              : `本账号由以下凭据登录：${
+                                  credential.displayName
+                                    ? `${credential.displayName}（${credential.username}）`
+                                    : credential.username
+                                }`
+                          }
                         >
-                          登录账号 {credential.displayName || credential.username}
+                          登录账号 {show(credential.displayName || credential.username)}
                         </span>
                       ) : (
                         <span className="tag muted" title="本次登录未关联已保存的凭据">
