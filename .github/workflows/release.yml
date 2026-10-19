@@ -158,16 +158,39 @@ jobs:
 
       # 用社区维护的 action 而不是手写 gh 命令：它把 release 的创建/更新、
       # 资产上传与重跑幂等性都处理好了，也支持 prerelease 判断。
+      - name: 读取发布说明
+        id: notes
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          tag="${TAG_NAME#v}"
+          file="docs/releases/v${tag}.md"
+          if [ -f "$file" ]; then
+            echo "使用 $file 作为发布说明"
+            {
+              cat "$file"
+              printf '\n---\n\n## 安装包\n\n'
+              printf -- '- Windows：`*-win.exe`（NSIS 安装包，支持应用内自动更新）\n'
+              printf -- '- macOS：`*-mac.dmg`\n'
+              printf -- '- Linux：`*-linux.AppImage`\n'
+            } > release-notes.md
+          else
+            echo "::warning::缺少 $file，回退到固定文案"
+            {
+              printf 'AutoSign %s\n\n' "$TAG_NAME"
+              printf -- '- Windows：`*-win.exe`（NSIS 安装包，支持应用内自动更新）\n'
+              printf -- '- macOS：`*-mac.dmg`\n'
+              printf -- '- Linux：`*-linux.AppImage`\n'
+            } > release-notes.md
+          fi
+          echo "path=release-notes.md" >> "$GITHUB_OUTPUT"
+
       - name: 上传到 Release
         uses: softprops/action-gh-release@v2
         with:
           name: AutoSign ${{ github.ref_name }}
-          body: |
-            自动构建产物，详见 README 的「版本与发布」一节。
-
-            - Windows：`*-win.exe`（NSIS 安装包，支持应用内自动更新）
-            - macOS：`*-mac.dmg`
-            - Linux：`*-linux.AppImage`
+          body_path: ${{ steps.notes.outputs.path }}
           files: release/*
           prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: true

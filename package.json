@@ -18,8 +18,9 @@
     "verify:ui": "node scripts/verify-ui.mjs && node scripts/verify-batch-progress.mjs && node scripts/verify-window-state.mjs && node scripts/verify-search-filter.mjs && node scripts/verify-mask.mjs && node scripts/verify-site-totals.mjs && node scripts/verify-reauth-entry.mjs",
     "test:net": "node tests/password-login.test.mjs",
     "check:secrets": "node scripts/check-secrets.mjs",
+    "check:notes": "node scripts/check-release-notes.mjs",
     "precommit": "npm run check:secrets",
-    "release:check": "npm run check:secrets && npm run typecheck && npm test && npm run verify:ui"
+    "release:check": "npm run check:secrets && npm run typecheck && npm test && npm run verify:ui && npm run check:notes"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
