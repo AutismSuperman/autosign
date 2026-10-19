@@ -41,10 +41,15 @@ export function AddAccountDialog({
     site.kind === 'NEWAPI' ? ['github', 'linuxdo', 'password'] : ['github']
   const [provider, setProvider] = useState<AuthProvider>(reauthAccount?.provider ?? site.provider)
   const [credentials, setCredentials] = useState<PublicCredential[]>([])
-  const [selected, setSelected] = useState<string>('')
+  // 重新授权时预选该账号原本用的凭据：会话失效后最该做的就是用同一身份重登一次
+  const [selected, setSelected] = useState<string>(reauthAccount?.credentialId ?? '')
 
   useEffect(() => {
-    void window.api.credential.list().then(setCredentials)
+    void window.api.credential.list().then((list) => {
+      setCredentials(list)
+      // 预选的凭据可能已被删除：清掉，避免对话框默认选中一个不存在的身份
+      setSelected((prev) => (prev && !list.some((c) => c.id === prev) ? '' : prev))
+    })
   }, [])
 
   /**

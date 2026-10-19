@@ -36,8 +36,9 @@ export async function keepAliveOnce(deps: KeepAliveDeps): Promise<{ renewed: num
   for (const site of deps.sites()) {
     for (const account of site.accounts) {
       if (!account.token && !account.cookie) continue
-      // 只有带 cookie 的账号才可能续期；纯 token 无 refresh 通道
-      if (!account.cookie) continue
+      // 续期换的是 access_token：没有 token 的纯 session 站（如 AgentRouter）
+      // 每轮都去调 refresh 只会稳定拿 404，白刷日志与流量。
+      if (!account.cookie || !account.token) continue
       total++
       if (!needsRefresh(account.token)) continue
       try {

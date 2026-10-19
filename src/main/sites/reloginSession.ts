@@ -9,7 +9,9 @@ import { passwordLogin } from '../auth/passwordLogin'
  * 账号只要绑定了带密码的凭据，就能用同一条登录接口重新换一份会话。
  *
  * 边界：
- *   - 只处理密码类凭据；GitHub / Linux DO 需要 OAuth 授权窗口，不能静默完成
+ *   - 密码凭据直接打登录接口
+ *   - GitHub / Linux DO 凭据先试静默重授权；分区登录态没了但存了密码时，
+ *     用密码在第三方站点重新登录一次，再点授权（仍然全程隐藏窗口）
  *   - 站点要求人机验证时，用隐藏窗口复用它自己的 Turnstile 挂件取令牌（不破解、不代答）
  *   - 取不到令牌就如实失败，让用户手工处理
  */
@@ -26,7 +28,60 @@ export interface ReloginAttempt {
 export function isSessionExpired(message: string | undefined, status?: number): boolean {
   if (status === 401 || status === 403) return true
   if (!message) return false
-  return /会话已失效|需要重新授权|授权已过期|未登录|请先登录|AUTH_TOKEN|unauthorized/i.test(message)
+  return /会话已失效|需要重新授权|需要重新登录|授权已过期|未登录|请先登录|AUTH_TOKEN|unauthorized/i.test(
+    message
+  )
+}
+
+/**
+ * 这条分区 Cookie 是否代表 GitHub / Linux DO 的第三方登录态。
+ *
+ * 抽成纯函数是因为「能不能静默重授权」完全取决于它：判定写错一次，
+ * 表现就是每天都要求用户手动授权。
+ */
+export function isProviderSessionCookie(domain: string, name: string, value: string): boolean {
+  if (!value) return false
+  const host = (domain ?? '').toLowerCase().replace(/^\./, '')
+  if (host !== 'github.com' && host !== 'www.github.com' && host !== 'linux.do') return false
+  return /^(user_session|_t|_forum_session)$/i.test(name)
+}
+
+export interface ReloginCapability {
+  ok: boolean
+  error?: string
+}
+
+/**
+ * 登出后还能不能自己登回来。
+ *
+ * RELOGIN 站点的「签到」必须先真登出，所以一旦登不回来，账号就比之前更糟。
+ * 这里在动手之前把「登回能力」算清楚：
+ *   1. 密码凭据 → 调登录接口，最稳
+ *   2. OAuth 凭据且保存了密码 → 用密码登录第三方站点，再点授权
+ *   3. OAuth 凭据且分区里还有第三方登录态 → 直接点授权
+ *   4. 都没有 → 不能登出，交还用户
+ */
+export function reloginCapability(
+  credential: { provider?: string; username?: string; password?: string } | undefined,
+  hasProviderSession: boolean,
+  accountProvider?: string
+): ReloginCapability {
+  // 账号没关联凭据不代表登不回来：分区里还留着第三方登录态就够
+  const provider = credential?.provider ?? accountProvider ?? 'password'
+  if (provider === 'password') {
+    return credential?.password
+      ? { ok: true }
+      : {
+          ok: false,
+          error: credential
+            ? `凭据 ${credential.username ?? ''} 没有保存密码`
+            : '该账号未关联凭据，无法自动登回'
+        }
+  }
+  if (credential?.password) return { ok: true }
+  if (hasProviderSession) return { ok: true }
+  const who = provider === 'linuxdo' ? 'Linux DO' : 'GitHub'
+  return { ok: false, error: `分区内没有 ${who} 登录态，且凭据未保存密码` }
 }
 
 /** 站点是否明确要求人机验证（登录接口也会校验）。 */

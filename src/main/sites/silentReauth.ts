@@ -8,6 +8,7 @@ import {
 } from '../auth/fill'
 import { totp } from '../auth/totp'
 import { accountPartition } from './partition'
+import { isProviderSessionCookie } from './reloginSession'
 import type { ReloginAttempt } from './reloginSession'
 
 /**
@@ -18,31 +19,37 @@ import type { ReloginAttempt } from './reloginSession'
  * 授权流程是**不需要用户输入密码**的 —— 第三方站点认得那个 Cookie，
  * 直接把授权页显示出来、点一下「Authorize」就换到新会话。
  *
+ * 分区里的第三方登录态也会失效（GitHub 的 user_session 有期限），
+ * 因此凭据里存了密码时会退回「用密码在第三方站点重新登录 → 点授权」。
+ * 两条路都走不通才交还用户。
+ *
  * 与 runOAuth 的区别：
  *   - 全程 `show: false`，不打扰用户
- *   - 只在分区里确实还有第三方登录态时才可能成功
+ *   - 只在确实有自动登录手段时才可能成功
  *   - 需要用户手动输入密码 / 过人机验证时，立即放弃并返回原因，
  *     由界面提供「重新授权」按钮交给用户处理
  */
 
+/** 静默重授权可用的凭据信息：只有主进程内存里才有密码原文。 */
+export interface SilentCredential {
+  username: string
+  password?: string
+  totpSecret?: string
+}
+
 export interface SilentReauthDeps {
   proxy: string
-  /** 凭据里的 TOTP 密钥（可选），GitHub 两步验证时用。 */
-  findTotpSecret?: () => string | undefined
+  /** 凭据（含密码与 TOTP），用于分区登录态失效后重新登录第三方站点。 */
+  credential?: SilentCredential
   timeoutMs?: number
 }
 
 /** 从分区 cookie 里判断是否还留着第三方登录态。 */
-async function hasProviderSession(site: Site, account: Account): Promise<boolean> {
+export async function hasProviderSession(site: Site, account: Account): Promise<boolean> {
   const ses = session.fromPartition(accountPartition(site.id, account.id))
   try {
     const list = await ses.cookies.get({})
-    return list.some((c) => {
-      const domain = (c.domain ?? '').toLowerCase()
-      if (!/github\.com|linux\.do/.test(domain)) return false
-      // user_session 是 GitHub 登录态；_t 是 Discourse 的会话键
-      return /^(user_session|_t|_forum_session)$/i.test(c.name) && !!c.value
-    })
+    return list.some((c) => isProviderSessionCookie(c.domain ?? '', c.name, c.value))
   } catch {
     return false
   }
@@ -97,14 +104,16 @@ export async function silentReauth(
   provider: 'github' | 'linuxdo',
   deps: SilentReauthDeps
 ): Promise<ReloginAttempt> {
-  // 分区里没有第三方登录态，静默走不通——直接说清楚，别白开窗口
-  if (!(await hasProviderSession(site, account))) {
+  const credential = deps.credential
+  const sessionAlive = await hasProviderSession(site, account)
+  // 分区里没有第三方登录态，也没有能重登的密码：静默走不通，直接说清楚，别白开窗口
+  if (!sessionAlive && !credential?.password) {
     return {
       ok: false,
       error:
         provider === 'github'
-          ? '分区内没有 GitHub 登录态，需要在应用内重新授权一次'
-          : '分区内没有 Linux DO 登录态，需要在应用内重新授权一次'
+          ? '分区内没有 GitHub 登录态，且凭据未保存密码，需要在应用内重新授权一次'
+          : '分区内没有 Linux DO 登录态，且凭据未保存密码，需要在应用内重新授权一次'
     }
   }
 
@@ -165,11 +174,10 @@ export async function silentReauth(
       if (!url) return
 
       try {
-        const totpSecret = deps.findTotpSecret?.()
         const payload = {
-          username: '',
-          password: undefined,
-          otp: totpSecret ? totp(totpSecret) : undefined
+          username: credential?.username ?? '',
+          password: credential?.password,
+          otp: credential?.totpSecret ? totp(credential.totpSecret) : undefined
         }
 
         // 授权确认页优先

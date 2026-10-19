@@ -805,22 +805,25 @@ export function SitesView(props: Props): React.JSX.Element {
                     )}
                   </div>
                   <div className="account-actions">
-                    {/* 会话已失效时，「重新授权」比「刷新额度」更该被看到 */}
-                    {status && !status.ok && isSessionExpired(status.error) && (
-                      <button
-                        className="btn small primary"
-                        onClick={() => props.onReauth(site.id, account.id)}
-                        disabled={props.busy.has(`reauth:${account.id}`)}
-                        title={`用 ${site.name} 的登录窗口重新授权此账号`}
-                      >
-                        {props.busy.has(`reauth:${account.id}`) ? (
-                          <RefreshCw size={12} className="rotating" />
-                        ) : (
-                          <LogIn size={12} />
-                        )}
-                        {props.busy.has(`reauth:${account.id}`) ? '授权中' : '重新授权'}
-                      </button>
-                    )}
+                    {/* 会话失效时这是首要动作；平时也保留入口——自动重登失败后
+                        用户必须能找到地方重新登录，不能只依赖状态标签 */}
+                    <button
+                      className={
+                        status && !status.ok && isSessionExpired(status.error)
+                          ? 'btn small primary'
+                          : 'btn small'
+                      }
+                      onClick={() => props.onReauth(site.id, account.id)}
+                      disabled={props.busy.has(`reauth:${account.id}`)}
+                      title={`用 ${site.name} 的登录窗口重新授权此账号`}
+                    >
+                      {props.busy.has(`reauth:${account.id}`) ? (
+                        <RefreshCw size={12} className="rotating" />
+                      ) : (
+                        <LogIn size={12} />
+                      )}
+                      {props.busy.has(`reauth:${account.id}`) ? '授权中' : '重新授权'}
+                    </button>
                     <button
                       className="btn small"
                       onClick={() => props.onRefreshAccount(account.id)}

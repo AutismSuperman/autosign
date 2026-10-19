@@ -28,7 +28,8 @@ await build({
   logLevel: 'error'
 })
 
-const { isSessionExpired, needsTurnstile } = require('../.tmp/reloginSession.cjs')
+const { isSessionExpired, needsTurnstile, reloginCapability, isProviderSessionCookie } =
+  require('../.tmp/reloginSession.cjs')
 
 const results = []
 const check = (name, ok, detail) => {
@@ -61,6 +62,67 @@ check('空消息不需要令牌', needsTurnstile(undefined) === false)
 check(
   '密码错误与 Turnstile 是不同错误',
   needsTurnstile('用户名或密码错误，或用户已被封禁') === false
+)
+
+// ---- 重登前置能力：决定「能不能先登出」 ----
+// 登出前必须确认登得回来，否则会把「没领到奖」变成「账号掉线」
+check(
+  '密码凭据 → 可以自动登回',
+  reloginCapability({ provider: 'password', username: 'demo', password: 'pw' }, false).ok === true
+)
+check(
+  '密码凭据无密码 → 不可登出',
+  reloginCapability({ provider: 'password', username: 'demo' }, false).ok === false
+)
+check(
+  'GitHub 凭据有密码 → 可以自动登回（重置第三方登录态）',
+  reloginCapability({ provider: 'github', username: 'demo', password: 'pw' }, false).ok === true
+)
+check(
+  'GitHub 凭据无密码但有分区登录态 → 可以自动登回',
+  reloginCapability({ provider: 'github', username: 'demo' }, true).ok === true
+)
+check(
+  'GitHub 凭据无密码也无分区登录态 → 不可登出',
+  reloginCapability({ provider: 'github', username: 'demo' }, false).ok === false
+)
+check(
+  '无凭据但分区登录态还在 → 仍可自动登回',
+  reloginCapability(undefined, true, 'github').ok === true
+)
+check(
+  '无凭据且无分区登录态 → 不可登出',
+  reloginCapability(undefined, false, 'github').ok === false
+)
+check(
+  '不可登回时给出可操作原因',
+  /GitHub|密码/.test(reloginCapability({ provider: 'github', username: 'demo' }, false).error ?? '')
+)
+
+// ---- 分区登录态判定 ----
+check(
+  'GitHub user_session 算登录态',
+  isProviderSessionCookie('.github.com', 'user_session', 'abc') === true
+)
+check(
+  'Linux DO _t 算登录态',
+  isProviderSessionCookie('.linux.do', '_t', 'abc') === true
+)
+check(
+  'GitHub 的 logged_in 不算登录态（未登录也会下发）',
+  isProviderSessionCookie('.github.com', 'logged_in', 'yes') === false
+)
+check(
+  '站点自己的 session 不算第三方登录态',
+  isProviderSessionCookie('.agentrouter.org', 'session', 'abc') === false
+)
+check(
+  '空值不算登录态',
+  isProviderSessionCookie('.github.com', 'user_session', '') === false
+)
+check(
+  '仿冒域名不算登录态',
+  isProviderSessionCookie('.github.com.evil.test', 'user_session', 'abc') === false
 )
 
 const failed = results.filter((r) => !r.ok)

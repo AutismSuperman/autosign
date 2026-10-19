@@ -33,8 +33,8 @@ import { runOAuth } from './sites/oauth'
 import { acquireTurnstileToken } from './sites/turnstile'
 import { reloginCheckin } from './sites/relogin'
 import { logoutSession } from './sites/logout'
-import { isSessionExpired, rebuildSession } from './sites/reloginSession'
-import { silentReauth } from './sites/silentReauth'
+import { isSessionExpired, rebuildSession, reloginCapability } from './sites/reloginSession'
+import { hasProviderSession, silentReauth } from './sites/silentReauth'
 import { startKeepAlive } from './sites/keepAlive'
 import { migrateAccountPartition } from './sites/partitionMigrate'
 import { readApiKeys } from './sites/tokens'
@@ -204,8 +204,9 @@ async function syncCheckinReceipt(site: Site, accountId: string, snapshot: Quota
 /**
  * 会话失效时用绑定凭据自动重建，并落库新会话。
  *
- * 只对绑定密码类凭据的账号有效；GitHub / Linux DO 需要授权窗口，
- * 这里如实返回失败并给出可操作提示。
+ * 密码类凭据直接登录；GitHub / Linux DO 先试静默重授权，分区登录态没了
+ * 但凭据存了密码时，用密码在第三方站点重新登录后再点授权。
+ * 两条都走不通才如实返回失败，由界面提供「重新授权」入口。
  */
 async function tryRebuildSession(
   site: Site,
@@ -228,12 +229,23 @@ async function tryRebuildSession(
       )
       return r.ok ? r.token : undefined
     },
-    // GitHub / Linux DO 会话过期：用分区里残留的登录态静默重授权，不打扰用户
-    silentReauth: (provider) =>
-      silentReauth(site, account, provider, {
+    // GitHub / Linux DO 会话过期：先用分区残留登录态静默重授权；
+    // 分区登录态也失效时，退回用凭据里的密码重新登录第三方站点
+    silentReauth: (provider) => {
+      const credential = account.credentialId
+        ? store.findCredential(account.credentialId)
+        : undefined
+      return silentReauth(site, account, provider, {
         proxy,
-        findTotpSecret: () => store.findCredential(account.credentialId ?? '')?.totpSecret
+        credential: credential
+          ? {
+              username: credential.username,
+              password: credential.password,
+              totpSecret: credential.totpSecret
+            }
+          : undefined
       })
+    }
   })
   if (!attempt.ok) return { ok: false, error: attempt.error }
 
@@ -416,9 +428,16 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
       })
       return { ok: true, already: true, reward: recon.reward, message: receipt.message }
     }
-    const result = await reloginCheckin(site, hit.account, {
+    const current = store.findAccount(accountId) ?? hit.account
+    const credential = current.credentialId ? store.findCredential(current.credentialId) : undefined
+    // 分区里还留着第三方登录态时，即使没存密码也能静默点授权登回来
+    const providerAlive = await hasProviderSession(site, current)
+
+    const result = await reloginCheckin(site, current, {
       proxy,
       session: sDeps,
+      // 登出前先确认登得回来：登不回来就保持现状，绝不把账号弄掉线
+      canRelogin: async () => reloginCapability(credential, providerAlive, current.provider),
       readBalance: async (fresh) => {
         if (!fresh) {
           const cached = store.findAccount(accountId)?.lastStatus
@@ -440,59 +459,13 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
         })
         return r.state === 'confirmed' || r.state === 'absent'
       },
+      // 登出后会话已被清掉，恢复必须靠保存的凭据（密码直登或静默 OAuth），
+      // 不能指望站点靠残留 Cookie 自己登回来
+      rebuild: async () =>
+        tryRebuildSession(site, store.findAccount(accountId) ?? hit.account, proxy),
       log: (level, message, detail) =>
         store.log(level, '重登签到', message, { siteId: site.id, accountId, detail })
     })
-
-    // 重登流程把站点会话登出后，隐藏窗口无法靠残留会话自动登录（账号本就是
-    // 用邮箱密码登的，分区里没有 OAuth 会话）。此时用保存的凭据重建会话，
-    // 再复核一次余额增量——登录动作本身就会发放当日额度。
-    if (!result.ok && result.needVisible) {
-      // 重新登录前的余额基线：重建会话本身就会发放当日额度
-      const beforeRelogin = store.findAccount(accountId)?.lastStatus?.available
-      const rebuilt = await tryRebuildSession(
-        site,
-        store.findAccount(accountId) ?? hit.account,
-        proxy
-      )
-      if (rebuilt.ok) {
-        const after = await readStatus(site, store.findAccount(accountId) ?? hit.account, {
-          proxy,
-          session: sDeps
-        })
-        await patchAccount(accountId, { lastStatus: after })
-        const delta =
-          beforeRelogin !== undefined && after.ok && after.available !== undefined
-            ? Math.round((after.available - beforeRelogin) * 100) / 100
-            : undefined
-        const gained = delta !== undefined && delta > 0
-        if (after.ok) {
-          const receipt: CheckinReceipt = {
-            at: Date.now(),
-            date: rewardDate(Date.now()),
-            ok: true,
-            already: !gained,
-            reward: gained ? delta : undefined,
-            message: gained
-              ? `重新登录成功，+$${delta.toFixed(2)} 已到账`
-              : '已重新登录；未检测到余额增加，可能今日已领'
-          }
-          await patchAccount(accountId, { lastCheckin: receipt })
-          store.log(
-            gained ? 'ok' : 'warn',
-            '签到',
-            `${site.name} / ${hit.account.label}：${receipt.message}`,
-            { siteId: site.id, accountId }
-          )
-          return {
-            ok: true,
-            already: !gained,
-            reward: gained ? delta : undefined,
-            message: receipt.message
-          }
-        }
-      }
-    }
 
     if (result.ok) {
       await patchAccount(accountId, {
@@ -503,6 +476,19 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
           already: false,
           reward: result.reward,
           message: result.message
+        }
+      })
+    } else if (result.needVisible) {
+      // 确实需要人工处理：把原因写进 lastStatus，账号行才会出现「重新授权」入口。
+      // 保留上一次的额度数字（会话失效不等于余额归零），但要如实标出失败。
+      const prev = store.findAccount(accountId)?.lastStatus
+      await patchAccount(accountId, {
+        lastStatus: {
+          at: Date.now(),
+          ok: false,
+          available: prev?.available,
+          used: prev?.used,
+          error: result.message
         }
       })
     }
@@ -850,7 +836,10 @@ function registerIpc(): void {
         } satisfies AccountResultDto
       }
 
-      const result = await runOAuth(site, draftId, provider as never, proxy, credential)
+      // 分区必须跟着最终账号 ID 走：重新授权时若用临时 draftId，
+      // GitHub 登录态会留在另一套分区里，而账号之后读的是自己那套，
+      // 于是每次静默重授权都「找不到登录态」，只能反复手动授权。
+      const result = await runOAuth(site, existing?.id ?? draftId, provider as never, proxy, credential)
       if (!result.ok) {
         store.log('err', '授权', `${site.name}：${result.error}`, { siteId })
         return { ok: false, error: result.error } satisfies AccountResultDto
