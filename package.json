@@ -16,7 +16,10 @@
     "dist": "npm run build && electron-builder",
     "dist:dir": "npm run build && electron-builder --dir",
     "verify:ui": "node scripts/verify-ui.mjs",
-    "test:net": "node tests/password-login.test.mjs"
+    "test:net": "node tests/password-login.test.mjs",
+    "check:secrets": "node scripts/check-secrets.mjs",
+    "precommit": "npm run check:secrets",
+    "release:check": "npm run check:secrets && npm run typecheck && npm test && npm run verify:ui"
   },
   "dependencies": {
     "https-proxy-agent": "^7.0.6",

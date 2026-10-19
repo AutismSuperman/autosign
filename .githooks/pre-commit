@@ -1,0 +1,8 @@
+#!/bin/sh
+# 提交前自检：按 AGENTS.md「二、账号与凭据保密要求」扫描暂存区。
+# 启用方式：git config core.hooksPath .githooks
+node scripts/check-secrets.mjs || {
+  echo ""
+  echo "提交已拦截。请修正后重试，或按 AGENTS.md 确认是误报再调整写法。"
+  exit 1
+}
