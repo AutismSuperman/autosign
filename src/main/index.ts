@@ -657,10 +657,29 @@ function applyDockIcon(): void {
   }
 }
 
-function createTray(): void {
-  // 托盘图标复用窗口图标；Windows 下小尺寸更清晰
+/**
+ * 托盘图标。
+ *
+ * macOS 与 Windows 对托盘图标的要求完全不同：
+ *   - macOS 菜单栏只有 22pt 高，应当使用**单色模板图**（透明背景 + 纯黑前景），
+ *     由系统按亮/暗主题自动反色。直接拿 512px 的彩色应用图标，
+ *     系统会原样等比塞进菜单栏，于是出现一块巨大的蓝紫色方块。
+ *   - Windows 托盘是 16px 的彩色图标，用彩色图但需要显式缩到 16。
+ */
+function trayImage(): Electron.NativeImage {
+  if (process.platform === 'darwin') {
+    const img = nativeImage.createFromPath(join(__dirname, '../../resources/trayTemplate.png'))
+    // 44px 图按 22pt 呈现，Retina 下清晰
+    const sized = img.resize({ width: 22, height: 22 })
+    sized.setTemplateImage(true)
+    return sized
+  }
   const image = nativeImage.createFromPath(appIconPath())
-  tray = new Tray(process.platform === 'win32' ? image.resize({ width: 18, height: 18 }) : image)
+  return image.resize({ width: 16, height: 16 })
+}
+
+function createTray(): void {
+  tray = new Tray(trayImage())
   tray.on('click', () => showMainWindow())
   tray.on('double-click', () => showMainWindow())
   updateTrayMenu()

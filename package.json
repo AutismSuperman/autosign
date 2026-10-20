@@ -1,6 +1,6 @@
 {
   "name": "autosign-desktop",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "桌面端公益 AI 中转站自动签到与额度管理",
   "author": "AutoSign Desktop",
@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "start": "electron-vite preview",
     "smoke": "npm run build && node scripts/smoke.mjs",
-    "test": "node tests/totp.test.mjs && node tests/session.test.mjs && node tests/relogin.test.mjs && node tests/relogin-flow.test.mjs && node tests/rebuild-session.test.mjs && node tests/checkin-reconcile.test.mjs && node tests/checkin-display.test.mjs && node tests/relogin-session.test.mjs && node tests/session-partition.test.mjs && node tests/api-keys.test.mjs && node tests/waf-detect.test.mjs && node tests/window-bounds.test.mjs && node tests/mask.test.mjs && node tests/update-policy.test.mjs && node tests/notify-state.test.mjs",
+    "test": "node tests/totp.test.mjs && node tests/session.test.mjs && node tests/relogin.test.mjs && node tests/relogin-flow.test.mjs && node tests/rebuild-session.test.mjs && node tests/checkin-reconcile.test.mjs && node tests/checkin-display.test.mjs && node tests/relogin-session.test.mjs && node tests/session-partition.test.mjs && node tests/api-keys.test.mjs && node tests/waf-detect.test.mjs && node tests/window-bounds.test.mjs && node tests/mask.test.mjs && node tests/update-policy.test.mjs && node tests/notify-state.test.mjs && node tests/tray-icon.test.mjs",
     "dist": "npm run build && electron-builder --config electron-builder.config.cjs --publish never",
     "dist:dir": "npm run build && electron-builder --config electron-builder.config.cjs --dir",
     "verify:ui": "node scripts/verify-ui.mjs && node scripts/verify-batch-progress.mjs && node scripts/verify-window-state.mjs && node scripts/verify-search-filter.mjs && node scripts/verify-mask.mjs && node scripts/verify-site-totals.mjs && node scripts/verify-reauth-entry.mjs",

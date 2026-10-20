@@ -205,6 +205,73 @@ def build_icon(size: int = SIZE, compact: bool = False) -> Image.Image:
     return with_shadow(block)
 
 
+def build_tray_template(size: int = 44) -> Image.Image:
+    """
+    macOS 菜单栏图标：纯黑前景 + 透明背景的模板图。
+
+    菜单栏图标和 Dock 图标是两套设计语言：
+      - Dock 用 1024 的彩色圆角方块；
+      - 菜单栏只有 22pt 高，必须去掉方块底板与投影，
+        只保留环形箭头 + 对勾，并交给系统按亮/暗主题自动反色。
+
+    因此这里导出的是 alpha 形状（黑色不透明 + 透明背景），
+    由 Electron 的 setTemplateImage 标记给系统着色。
+    尺寸取 44px 对应 22pt @2x，Retina 下不发虚。
+    """
+    s = size * SS
+    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+
+    # 菜单栏图标要占满整个画布，不能沿用 Dock 图标 80% 的留白，
+    # 否则在菜单栏里会显得比其他应用小一圈。
+    scale = size / SIZE
+    cx = cy = s / 2
+
+    # 图形整体上移一点：对勾与箭头的重心偏下，居中反而看着靠下
+    cy -= 8 * SS
+
+    ring_r = RING_RADIUS * scale * SS * 1.32
+    ring_w = RING_WIDTH * scale * SS * 1.32
+    box = (cx - ring_r, cy - ring_r, cx + ring_r, cy + ring_r)
+    black = (0, 0, 0, 255)
+
+    if RING_START < RING_END:
+        d.arc(box, start=RING_START, end=RING_END, fill=black, width=round(ring_w))
+    else:
+        d.arc(box, start=RING_START, end=360, fill=black, width=round(ring_w))
+        d.arc(box, start=0, end=RING_END, fill=black, width=round(ring_w))
+
+    sa = math.radians(RING_START)
+    ea = math.radians(RING_END)
+    hx, hy = cx + math.cos(ea) * ring_r, cy + math.sin(ea) * ring_r
+    tx, ty = -math.sin(ea), math.cos(ea)
+    nx, ny = math.cos(ea), math.sin(ea)
+
+    head_len = HEAD_LEN * scale * SS * 1.32
+    head_half = HEAD_HALF * scale * SS * 1.32
+    bx, by = hx - tx * ring_w * 0.3, hy - ty * ring_w * 0.3
+    tip = (bx + tx * head_len, by + ty * head_len)
+    b1 = (bx + nx * head_half, by + ny * head_half)
+    b2 = (bx - nx * head_half, by - ny * head_half)
+    d.polygon([tip, b1, b2], fill=black)
+
+    # 对勾同样绕 (512,512) 布局，先平移到画布中心
+    pts = [
+        (cx + (x - SIZE / 2) * scale * SS * 1.32, cy + (y - SIZE / 2) * scale * SS * 1.32)
+        for x, y in CHECK_POINTS
+    ]
+    lw = round(CHECK_WIDTH * scale * SS * 1.32)
+    d.line(pts, fill=black, width=lw, joint="curve")
+    for x, y in (pts[0], pts[-1], pts[1]):
+        disc(d, x, y, lw / 2, black)
+
+    out = img.resize((size, size), Image.LANCZOS)
+    # 图形贴边时缩采样会损失不透明度；抬一点对比度让边缘更利落
+    alpha = out.getchannel("A").point(lambda v: 255 if v > 40 else v)
+    out.putalpha(alpha)
+    return out
+
+
 def main() -> None:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     build_dir = os.path.join(root, "build")
@@ -216,7 +283,8 @@ def main() -> None:
 
     master.save(os.path.join(build_dir, "icon.png"))
     master.resize((512, 512), Image.LANCZOS).save(os.path.join(res_dir, "icon.png"))
-
+    # macOS 菜单栏图标：44×44 单色模板图，由系统按亮/暗主题着色
+    build_tray_template(44).save(os.path.join(res_dir, "trayTemplate.png"))
     # Windows 图标：48px 以上用正常留白版，16/32px 换成加粗紧凑版。
     # 小尺寸下正常版的留白会让图形缩成一团，任务栏里几乎看不清。
     ico_sizes = [256, 128, 64, 48, 32, 16]
@@ -249,6 +317,7 @@ def main() -> None:
     print(f"  build/icon.ico     {', '.join(str(w) for w in ico_sizes)}")
     print(f"  build/icon.icns    {icns_note}")
     print("  resources/icon.png 512x512")
+    print("  resources/trayTemplate.png 44x44（macOS 菜单栏，单色模板）")
 
 
 if __name__ == "__main__":
