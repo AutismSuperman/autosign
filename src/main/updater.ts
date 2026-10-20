@@ -12,6 +12,7 @@ import {
   requiresManualInstall,
   resolveAssetUrl
 } from './updatePolicy'
+import { NotifyStateStore } from './notifyState'
 
 /**
  * 应用更新。
@@ -47,6 +48,8 @@ let initialized = false
 /** macOS 是否能用应用内安装（需要 Developer ID 签名）。null 表示尚未检测。 */
 let inAppInstallable: boolean | null = null
 let signingProbe: Promise<boolean> | null = null
+/** 记录哪些版本已经主动提示过，保证同一版本只打扰一次。 */
+let notifyState: NotifyStateStore | null = null
 
 function emit(status: UpdateStatus): void {
   current = status
@@ -188,6 +191,32 @@ export function openDownloadPage(): void {
 }
 
 /**
+ * 后台检查发现新版本时主动提示一次。
+ *
+ * 用系统通知而不是模态框：这个应用多数时间在托盘里，
+ * 模态框会抢焦点打断正在做的事，而通知点一下就能去下载。
+ * 同一版本只提示一次，之后再检查到只在设置页更新状态。
+ */
+async function notifyOnce(version: string): Promise<void> {
+  if (notifyState) {
+    await notifyState.load()
+    if (!notifyState.shouldNotify(version)) return
+    // 先落盘再弹：宁可少提示一次，也不要在通知中心堆一串重复条目
+    await notifyState.markNotified(version)
+  }
+  if (!Notification.isSupported()) return
+  const n = new Notification({
+    title: 'AutoSign 有新版本',
+    body: `v${version} 已发布。点击下载安装包，覆盖安装后账号与配置都会保留。`
+  })
+  n.on('click', () => {
+    // 后台检查时不抢焦点，用户点通知才把窗口带到前台
+    openDownloadPage()
+  })
+  n.show()
+}
+
+/**
  * 初始化事件监听。只在主进程启动时调用一次。
  *
  * 自动检查放在启动后一段时间，避免和窗口加载、首轮额度刷新抢带宽。
@@ -195,6 +224,9 @@ export function openDownloadPage(): void {
 export function initUpdater(): void {
   if (initialized || !updaterAvailable()) return
   initialized = true
+
+  notifyState = new NotifyStateStore(`${app.getPath('userData')}/update-notify.json`)
+  void notifyState.load()
 
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
@@ -223,6 +255,8 @@ export function initUpdater(): void {
             cancelId: 1
           })
           if (r.response === 0) openDownloadPage()
+        } else {
+          await notifyOnce(info.version)
         }
         return
       }
