@@ -37,7 +37,11 @@ module.exports = {
     deleteAppDataOnUninstall: false
   },
   mac: {
-    target: ['dmg'],
+    // zip 不是可选项：electron-updater 在 macOS 上只接受 zip 更新包
+    // （MacUpdater 按扩展名过滤，找不到 zip 直接抛 ERR_UPDATER_ZIP_FILE_NOT_FOUND）。
+    // 只出 dmg 时 latest-mac.yml 里只有 dmg，检查更新必然报
+    // 「ZIP file not provided」。dmg 仍保留给用户手动下载安装。
+    target: ['dmg', 'zip'],
     category: 'public.app-category.utilities',
     icon: 'build/icon.icns',
     // identity: '-' 表示 ad-hoc 签名。
@@ -47,8 +51,13 @@ module.exports = {
     // 「已损坏，应移到废纸篓」。ad-hoc 签名不证明开发者身份，但让
     // 应用带有有效的代码签名结构，双击即可正常启动。
     //
+    // 注意：ad-hoc 签名下**应用内自动安装不可用**。Squirrel.Mac 用
+    // 已安装应用的 designated requirement 校验新包，ad-hoc 的该要求
+    // 绑定当次构建的 cdhash，换版本必然不匹配。程序会在检查到新版本
+    // 后改为提供安装包直链，详见 src/main/updatePolicy.ts。
+    //
     // 配置了正式证书（CSC_LINK / CSC_KEY_PASSWORD）时，CI 会用证书
-    // 签名，identity 会被实际证书覆盖。
+    // 签名，identity 会被实际证书覆盖，届时应用内更新自动启用。
     identity: '-',
     hardenedRuntime: false,
     gatekeeperAssess: false,

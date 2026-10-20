@@ -58,6 +58,7 @@ const api: ZcodeApi = {
     check: () => ipcRenderer.invoke(IPC.updateCheck, true),
     current: () => ipcRenderer.invoke(IPC.updateStatus),
     install: () => ipcRenderer.invoke(IPC.updateInstall),
+    openDownload: () => ipcRenderer.invoke(IPC.updateOpenDownload),
     onChange: (listener) => {
       const handler = (_e: unknown, status: Parameters<typeof listener>[0]): void => listener(status)
       ipcRenderer.on(IPC.updateChanged, handler)

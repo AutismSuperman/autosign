@@ -129,9 +129,12 @@ jobs:
         with:
           name: dist-${{ matrix.os }}
           # latest.yml / *.blockmap 也要带上：自动更新依赖它们判断版本
+          # macOS 的 zip 是 electron-updater 唯一接受的更新包格式，缺了它
+          # 客户端会报「ZIP file not provided」，所以必须一起上传。
           path: |
             dist/*.exe
             dist/*.dmg
+            dist/*.zip
             dist/*.AppImage
             dist/latest*.yml
             dist/*.blockmap
@@ -145,6 +148,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 必须 checkout：发布说明写在 docs/releases/v<version>.md 里，
+      # 不取代码就只能拿到一个空目录，最终静默退回固定文案
+      # （v0.4.0 / v0.4.1 就是这么丢掉变更内容的）。
+      - uses: actions/checkout@v5
+
       - uses: actions/download-artifact@v5
         with:
           path: artifacts
@@ -166,24 +174,20 @@ jobs:
         run: |
           tag="${TAG_NAME#v}"
           file="docs/releases/v${tag}.md"
-          if [ -f "$file" ]; then
-            echo "使用 $file 作为发布说明"
-            {
-              cat "$file"
-              printf '\n---\n\n## 安装包\n\n'
-              printf -- '- Windows：`*-win.exe`（NSIS 安装包，支持应用内自动更新）\n'
-              printf -- '- macOS：`*-mac.dmg`\n'
-              printf -- '- Linux：`*-linux.AppImage`\n'
-            } > release-notes.md
-          else
-            echo "::warning::缺少 $file，回退到固定文案"
-            {
-              printf 'AutoSign %s\n\n' "$TAG_NAME"
-              printf -- '- Windows：`*-win.exe`（NSIS 安装包，支持应用内自动更新）\n'
-              printf -- '- macOS：`*-mac.dmg`\n'
-              printf -- '- Linux：`*-linux.AppImage`\n'
-            } > release-notes.md
+          # 缺发布说明直接失败，而不是发一个「不知道更新了什么」的版本。
+          # AGENTS.md §1.7 要求每个版本都有可读的变更说明。
+          if [ ! -f "$file" ]; then
+            echo "::error::缺少 $file —— 发布说明必须随版本提交"
+            exit 1
           fi
+          echo "使用 $file 作为发布说明"
+          {
+            cat "$file"
+            printf '\n---\n\n## 安装包\n\n'
+            printf -- '- Windows：`*-win.exe`（NSIS 安装包，支持应用内自动更新）\n'
+            printf -- '- macOS：`*-mac.dmg`（覆盖安装即可；`*-mac.zip` 供应用内更新使用）\n'
+            printf -- '- Linux：`*-linux.AppImage`\n'
+          } > release-notes.md
           echo "path=release-notes.md" >> "$GITHUB_OUTPUT"
 
       - name: 上传到 Release

@@ -52,6 +52,7 @@ import {
   getUpdateStatus,
   initUpdater,
   onUpdateStatus,
+  openDownloadPage,
   quitAndInstall,
   updaterAvailable
 } from './updater'
@@ -1137,6 +1138,9 @@ function registerIpc(): void {
   ipcMain.handle(IPC.updateCheck, () => checkForUpdates(true))
   ipcMain.handle(IPC.updateInstall, () => {
     quitAndInstall()
+  })
+  ipcMain.handle(IPC.updateOpenDownload, () => {
+    openDownloadPage()
   })
 }
 

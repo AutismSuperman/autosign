@@ -359,7 +359,11 @@ export function SettingsView(props: Props): React.JSX.Element {
                 />
                 {update.state === 'checking' ? '检查中…' : '检查更新'}
               </button>
-              <UpdateStatusText status={update} onInstall={() => void window.api.update.install()} />
+              <UpdateStatusText
+                status={update}
+                onInstall={() => void window.api.update.install()}
+                onDownload={() => void window.api.update.openDownload()}
+              />
             </div>
           </div>
         </div>
@@ -376,10 +380,12 @@ export function SettingsView(props: Props): React.JSX.Element {
  */
 function UpdateStatusText({
   status,
-  onInstall
+  onInstall,
+  onDownload
 }: {
   status: UpdateStatus
   onInstall: () => void
+  onDownload: () => void
 }): React.JSX.Element | null {
   switch (status.state) {
     case 'idle':
@@ -409,11 +415,31 @@ function UpdateStatusText({
           </button>
         </>
       )
+    case 'manual':
+      return (
+        <>
+          <span className="tag accent" title="当前构建没有 Apple 开发者证书签名，系统不允许应用内安装">
+            发现 v{status.version}
+          </span>
+          <button className="btn small primary" onClick={onDownload}>
+            <HardDriveDownload size={13} />
+            下载安装包
+          </button>
+        </>
+      )
     case 'error':
       return (
-        <span className="tag err" title={status.message}>
-          {status.message.length > 34 ? `${status.message.slice(0, 34)}…` : status.message}
-        </span>
+        <>
+          <span className="tag err" title={status.message}>
+            {status.message.length > 34 ? `${status.message.slice(0, 34)}…` : status.message}
+          </span>
+          {status.manualUrl ? (
+            <button className="btn small" onClick={onDownload}>
+              <HardDriveDownload size={13} />
+              手动下载
+            </button>
+          ) : null}
+        </>
       )
   }
 }

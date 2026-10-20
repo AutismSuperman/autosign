@@ -63,7 +63,12 @@ export type UpdateStatus =
   | { state: 'none' }
   | { state: 'downloading'; percent: number; transferred: number; total: number }
   | { state: 'ready'; version: string }
-  | { state: 'error'; message: string }
+  /**
+   * 有新版本但无法应用内安装（当前是 macOS 的非 Developer ID 构建）。
+   * 给出该架构的安装包直链，由用户手动下载覆盖安装。
+   */
+  | { state: 'manual'; version: string; url: string }
+  | { state: 'error'; message: string; manualUrl?: string }
 
 export interface AppInfo {
   version: string
@@ -73,8 +78,7 @@ export interface AppInfo {
 }
 
 export const IPC = {
-  configGet: 'config:get',
-  settingsUpdate: 'settings:update',
+  configGet: 'config:get',  settingsUpdate: 'settings:update',
   siteAdd: 'site:add',
   siteUpdate: 'site:update',
   siteRemove: 'site:remove',
@@ -102,6 +106,7 @@ export const IPC = {
   updateCheck: 'update:check',
   updateStatus: 'update:status',
   updateInstall: 'update:install',
+  updateOpenDownload: 'update:openDownload',
   /** 主进程 → 渲染进程：配置发生变化，渲染端应重新拉取。 */
   configChanged: 'config:changed',
   /** 主进程 → 渲染进程：自动更新状态变化。 */
@@ -185,6 +190,8 @@ export interface ZcodeApi {
     current(): Promise<UpdateStatus>
     /** 重启并安装已下载的更新。 */
     install(): Promise<void>
+    /** 打开手动下载页：macOS 非开发者证书签名的构建无法应用内安装。 */
+    openDownload(): Promise<void>
     /** 订阅更新状态变化。返回取消订阅函数。 */
     onChange(listener: (status: UpdateStatus) => void): () => void
   }
