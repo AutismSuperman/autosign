@@ -13,7 +13,13 @@ export function resolveTheme(mode: ThemeMode): ResolvedTheme {
 }
 
 export function applyTheme(mode: ThemeMode): void {
-  document.documentElement.dataset.theme = resolveTheme(mode)
+  const root = document.documentElement
+  // 切换瞬间暂停所有过渡，避免颜色一块块渐变闪烁
+  root.classList.add('theme-switching')
+  root.dataset.theme = resolveTheme(mode)
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => root.classList.remove('theme-switching'))
+  })
 }
 
 /**

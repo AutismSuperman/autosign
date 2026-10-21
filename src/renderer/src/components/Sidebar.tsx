@@ -11,7 +11,6 @@ import {
 } from 'lucide-react'
 import type { Site } from '@shared/types'
 import type { ViewKey } from '../App'
-import iconUrl from '../../../../resources/icon.png'
 import { useSiteIcon } from '../lib/useSiteIcon'
 
 interface Props {
@@ -63,14 +62,6 @@ export function Sidebar(props: Props): React.JSX.Element {
 
   return (
     <aside className={collapsed ? 'sidebar collapsed' : 'sidebar'}>
-      <div className="brand">
-        <img className="brand-mark" src={iconUrl} alt="" aria-hidden="true" />
-        <div className="brand-text">
-          <div className="brand-name">AutoSign</div>
-          <div className="brand-sub">签到指挥中心</div>
-        </div>
-      </div>
-
       <div className="sidebar-scroll">
         <div className="section-head">
           <span>站点</span>
@@ -121,7 +112,7 @@ export function Sidebar(props: Props): React.JSX.Element {
         })}
 
         {visibleSites.length === 0 && !collapsed && (
-          <div className="hint" style={{ padding: '4px 10px' }}>
+          <div className="hint sidebar-hint">
             还没有站点，点击上方「添加」。
           </div>
         )}

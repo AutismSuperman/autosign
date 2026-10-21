@@ -3,6 +3,7 @@ import { Check, Plus, Search, ServerCog } from 'lucide-react'
 import { CATALOG } from '@shared/catalog'
 import type { CatalogEntry } from '@shared/types'
 import { Modal } from './Modal'
+import { Seg } from './Seg'
 import { MODE_LABEL, providerLabel } from '../lib/format'
 import { useSiteIcon } from '../lib/useSiteIcon'
 
@@ -74,22 +75,15 @@ export function AddSiteDialog(props: Props): React.JSX.Element {
       onSubmit={submit}
       submitDisabled={!canSubmit}
       headExtra={
-        <div className="seg">
-          <button
-            className={tab === 'catalog' ? 'seg-item active' : 'seg-item'}
-            onClick={() => setTab('catalog')}
-          >
-            <ServerCog size={13} />
-            内置站点
-          </button>
-          <button
-            className={tab === 'custom' ? 'seg-item active' : 'seg-item'}
-            onClick={() => setTab('custom')}
-          >
-            <Plus size={13} />
-            自定义
-          </button>
-        </div>
+        <Seg
+          value={tab}
+          items={[
+            { key: 'catalog', label: '内置站点', icon: ServerCog },
+            { key: 'custom', label: '自定义', icon: Plus }
+          ]}
+          onChange={setTab}
+          ariaLabel="添加方式"
+        />
       }
     >
       {tab === 'catalog' ? (

@@ -11,6 +11,7 @@ import {
   Tray
 } from 'electron'
 import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { ConfigStore } from './store'
 import { resolveProxy, probeProxy } from './net/proxy'
 import { catalogById, siteFromCatalog } from '../shared/catalog'
@@ -95,11 +96,28 @@ let trayHintShown = false
 /** 界面主题同步到原生层：滚动条、菜单等原生控件跟随深浅色。 */
 function applyNativeTheme(): void {
   nativeTheme.themeSource = store.getSettings().theme ?? 'dark'
+  applyTitleBarOverlay()
 }
 
 /** 窗口初始背景色与主题一致，避免启动瞬间闪色。 */
 function windowBackgroundColor(): string {
-  return nativeTheme.shouldUseDarkColors ? '#0f1115' : '#f4f6fa'
+  return nativeTheme.shouldUseDarkColors ? '#1a1a1e' : '#f4f4f6'
+}
+
+/** Windows 窗口控制覆叠配色：与标题条同底，符号色跟随主题文字。 */
+function titleBarOverlay(): { color: string; symbolColor: string; height: number } {
+  const dark = nativeTheme.shouldUseDarkColors
+  return {
+    color: dark ? '#1a1a1e' : '#f4f4f6',
+    symbolColor: dark ? '#b9b9c1' : '#4b4b53',
+    height: 44
+  }
+}
+
+/** 主题变化时同步覆叠配色，否则亮色主题下右上角会剩一块深色底。 */
+function applyTitleBarOverlay(): void {
+  if (process.platform !== 'win32') return
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitleBarOverlay(titleBarOverlay())
 }
 
 function showMainWindow(): void {
@@ -637,7 +655,9 @@ function updateTrayMenu(): void {
  * 相对 __dirname 的位置一致，因此同一个路径两边都能用。
  */
 function appIconPath(): string {
-  return join(__dirname, '../../resources/icon.png')
+  // Windows 的标题栏 / Alt-Tab / 任务栏会按场景取 16~256 不同档位，
+  // 多尺寸 .ico 才能每档都清晰；其余平台用 PNG。
+  return join(__dirname, '../../resources', process.platform === 'win32' ? 'icon.ico' : 'icon.png')
 }
 
 /**
@@ -660,22 +680,45 @@ function applyDockIcon(): void {
 /**
  * 托盘图标。
  *
- * macOS 与 Windows 对托盘图标的要求完全不同：
- *   - macOS 菜单栏只有 22pt 高，应当使用**单色模板图**（透明背景 + 纯黑前景），
- *     由系统按亮/暗主题自动反色。直接拿 512px 的彩色应用图标，
- *     系统会原样等比塞进菜单栏，于是出现一块巨大的蓝紫色方块。
- *   - Windows 托盘是 16px 的彩色图标，用彩色图但需要显式缩到 16。
+ * 三个平台三套做法，都是各自规范里的标准形态：
+ *   - macOS 菜单栏只有 22pt 高，用**单色模板图**（纯黑 + alpha），
+ *     由系统按亮/暗主题自动反色。同目录还提供 44px 的 @2x 档，
+ *     Electron 按文件名自动装载，Retina 下取 @2x 不再放大发虚；
+ *     代码里不能 resize 成单档，否则高分屏只剩 1x 表示。
+ *   - Windows 通知区在 100%/125%/150%/200% DPI 下分别要
+ *     16/20/24/32 物理像素，按 scaleFactor 挂四个表示让系统自选。
+ *   - Linux 面板尺寸不一，给 32px 源图由面板自行缩放。
  */
 function trayImage(): Electron.NativeImage {
   if (process.platform === 'darwin') {
     const img = nativeImage.createFromPath(join(__dirname, '../../resources/trayTemplate.png'))
-    // 44px 图按 22pt 呈现，Retina 下清晰
-    const sized = img.resize({ width: 22, height: 22 })
-    sized.setTemplateImage(true)
-    return sized
+    img.setTemplateImage(true)
+    return img
   }
-  const image = nativeImage.createFromPath(appIconPath())
-  return image.resize({ width: 16, height: 16 })
+  if (process.platform === 'win32') {
+    const reps: Array<[number, number]> = [
+      [1, 16],
+      [1.25, 20],
+      [1.5, 24],
+      [2, 32]
+    ]
+    const [firstScale, firstPx] = reps[0]
+    const image = nativeImage.createFromBuffer(readFileSync(join(__dirname, `../../resources/tray-${firstPx}.png`)), {
+      scaleFactor: firstScale,
+      width: 16,
+      height: 16
+    })
+    for (const [scaleFactor, px] of reps.slice(1)) {
+      image.addRepresentation({
+        scaleFactor,
+        width: 16,
+        height: 16,
+        buffer: readFileSync(join(__dirname, `../../resources/tray-${px}.png`))
+      })
+    }
+    return image
+  }
+  return nativeImage.createFromPath(join(__dirname, '../../resources/tray-32.png'))
 }
 
 function createTray(): void {
@@ -1273,6 +1316,14 @@ async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     x: bounds.x,
     y: bounds.y,
+    // 隐藏原生标题栏（magpie 风格）：渲染进程自绘标题条承担拖拽与品牌展示，
+    // 最小化/最大化/关闭用系统控件 —— Windows 为窗口控制覆叠，macOS 为红绿灯。
+    // Linux 不支持隐藏标题栏，保留原生框。
+    ...(process.platform === 'win32'
+      ? { titleBarStyle: 'hidden' as const, titleBarOverlay: titleBarOverlay() }
+      : process.platform === 'darwin'
+        ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 14 } }
+        : {}),
     width: bounds.width,
     height: bounds.height,
     minWidth: 1040,
@@ -1307,6 +1358,7 @@ async function createWindow(): Promise<void> {
   if (bounds.maximized) mainWindow.maximize()
 
   mainWindow.once('ready-to-show', () => mainWindow?.show())
+  applyTitleBarOverlay()
 
   // 关窗最小化到托盘：定时签到依赖主进程存活，直接退出会让「关闭窗口后仍会按时运行」落空
   mainWindow.on('close', (e) => {

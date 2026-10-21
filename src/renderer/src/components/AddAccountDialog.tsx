@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ExternalLink, KeyRound, LogIn } from 'lucide-react'
 import type { AuthProvider, PublicCredential, Site } from '@shared/types'
 import { Modal } from './Modal'
+import { Seg } from './Seg'
 import { providerAvatar, providerLabel } from '../lib/format'
 
 interface Props {
@@ -89,7 +90,7 @@ export function AddAccountDialog({
       submitDisabled={!canSubmit}
     >
       {reauth && (
-        <div className="hint" style={{ marginBottom: 12 }}>
+        <div className="hint reauth">
           {reauthWord === '重新登录'
             ? '当前账号的会话已失效。用保存的凭据重新登录一次即可恢复，'
             : '当前账号的会话已失效。完成一次登录即可替换它的会话，'}
@@ -98,20 +99,15 @@ export function AddAccountDialog({
       )}
       <div className="modal-field">
         <label className="modal-label">登录方式</label>
-        <div className="seg">
-          {providers.map((p) => (
-            <button
-              key={p}
-              className={provider === p ? 'seg-item active' : 'seg-item'}
-              onClick={() => {
-                setProvider(p as AuthProvider)
-                setSelected('')
-              }}
-            >
-              {providerLabel(p as AuthProvider)}
-            </button>
-          ))}
-        </div>
+        <Seg
+          value={provider}
+          items={providers.map((p) => ({ key: p, label: providerLabel(p) }))}
+          onChange={(p) => {
+            setProvider(p)
+            setSelected('')
+          }}
+          ariaLabel="登录方式"
+        />
       </div>
 
       <div className="modal-field">
@@ -160,8 +156,8 @@ export function AddAccountDialog({
           ))}
         </div>
         {usable.length === 0 && (
-          <div className="hint" style={{ marginTop: 8, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
-            <KeyRound size={14} style={{ flex: 'none', marginTop: 3 }} />
+          <div className="hint hint-inline">
+            <KeyRound size={14} />
             <span>
               {alreadyAdded.length > 0 && usable.length === 0
                 ? `该站点的 ${providerLabel(provider)} 凭据都已登录过，无需重复添加。如需追加，请先在「账号」页添加新的凭据。`
@@ -172,7 +168,7 @@ export function AddAccountDialog({
           </div>
         )}
         {alreadyAdded.length > 0 && usable.length > 0 && (
-          <div className="hint" style={{ marginTop: 8 }}>
+          <div className="hint">
             已跳过 {alreadyAdded.length} 个已在该站点登录过的凭据：
             {alreadyAdded.map((c) => c.displayName || c.username).join('、')}
           </div>

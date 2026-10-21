@@ -1,18 +1,22 @@
 /**
  * 托盘图标的静态检查。
  *
- * 起因：macOS 菜单栏里出现了一块巨大的蓝紫色方块 —— 托盘直接用了
- * 512px 的彩色应用图标，系统把它原样塞进 22pt 高的菜单栏。
+ * 起因：macOS 菜单栏里出现过一块巨大的蓝紫色方块（托盘直接用了彩色应用
+ * 图标），后来改为模板图后又出现过 Retina 下发虚（代码把 44px 单档
+ * resize 成 22px，高分屏被系统放大回去）。
  *
  * 这里不启动 Electron，只校验产物本身：
- *   1. macOS 模板图存在，且是 44×44 的 RGBA（对应 22pt @2x）
+ *   1. macOS 模板图两档齐全：22×22（@1x）与 44×44（@2x），
+ *      Electron 按文件名自动装载 @2x，缺档时 Retina 必然发虚
  *   2. 模板图前景是纯黑、背景透明（模板图由系统按主题着色，
  *      带颜色或带不透明背景都会被系统原样呈现）
- *   3. 模板图不是整块不透明（那就是又退回了彩色方块）
+ *   3. Windows 托盘四档齐全：16/20/24/32 物理像素，
+ *      对应 100%/125%/150%/200% DPI，缺档时系统拉伸相邻档会发糊
  *
  * 运行：npm test
  */
 import { readFileSync, existsSync } from 'node:fs'
+import { inflateSync } from 'node:zlib'
 
 const checks = []
 const ck = (name, ok, detail) => {
@@ -20,30 +24,8 @@ const ck = (name, ok, detail) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  [${detail}]` : ''}`)
 }
 
-const file = 'resources/trayTemplate.png'
-ck('macOS 托盘模板图存在', existsSync(file))
-if (!existsSync(file)) {
-  console.log(`\n0/${checks.length} 通过`)
-  process.exit(1)
-}
-
-const buf = readFileSync(file)
-// PNG 头：8 字节签名 + IHDR（宽高各 4 字节大端，随后位深、颜色类型）
-ck('是 PNG 格式', buf.subarray(1, 4).toString('latin1') === 'PNG')
-const width = buf.readUInt32BE(16)
-const height = buf.readUInt32BE(20)
-const bitDepth = buf[24]
-const colorType = buf[25]
-
-ck('尺寸为 44×44（22pt @2x）', width === 44 && height === 44, `${width}×${height}`)
-// colorType 6 = RGBA，模板图必须有 alpha 通道
-ck('带 alpha 通道（RGBA）', colorType === 6, `colorType=${colorType}`)
-ck('位深 8', bitDepth === 8, `bitDepth=${bitDepth}`)
-
 // 解出像素做形状与配色检查。PNG 数据是 zlib 压缩的 IDAT，这里按最小实现解。
-// 不引第三方库：只处理我们自己生成的这一种格式。
-import { inflateSync } from 'node:zlib'
-
+// 不引第三方库：只处理我们自己生成的这一种格式（8 位 RGBA）。
 function decodePng(image) {
   let pos = 8
   let w = 0
@@ -97,23 +79,65 @@ function decodePng(image) {
   return { width: w, height: h, channels, data: out }
 }
 
-const png = decodePng(buf)
-let opaque = 0
-let colored = 0
-for (let i = 0; i < png.width * png.height; i++) {
-  const o = i * 4
-  const [r, g, b, a] = [png.data[o], png.data[o + 1], png.data[o + 2], png.data[o + 3]]
-  if (a > 200) {
-    opaque++
-    // 模板图要求前景为黑（或极深灰）；出现明显彩色说明还在用彩色图标
-    if (Math.abs(r - g) > 24 || Math.abs(g - b) > 24) colored++
+function pngInfo(file) {
+  const buf = readFileSync(file)
+  if (buf.subarray(1, 4).toString('latin1') !== 'PNG') return null
+  return {
+    width: buf.readUInt32BE(16),
+    height: buf.readUInt32BE(20),
+    bitDepth: buf[24],
+    colorType: buf[25],
+    png: decodePng(buf)
   }
 }
 
-const total = png.width * png.height
-ck('背景为透明（不是整块实心）', opaque < total * 0.85, `不透明占比 ${((opaque / total) * 100).toFixed(0)}%`)
-ck('前景为单色黑（适合模板着色）', colored === 0, `彩色像素 ${colored}`)
-ck('图形足够可见（不是空图）', opaque > total * 0.05, `不透明占比 ${((opaque / total) * 100).toFixed(0)}%`)
+/** 模板图要求：RGBA、前景纯黑、背景透明、图形可见。 */
+function checkTemplate(file, expect) {
+  const label = file.split('/').pop()
+  if (!existsSync(file)) {
+    ck(`${label} 存在`, false)
+    return
+  }
+  const info = pngInfo(file)
+  ck(`${label} 是 8 位 RGBA PNG`, !!info && info.colorType === 6 && info.bitDepth === 8, info ? `colorType=${info.colorType}` : '解析失败')
+  ck(`${label} 尺寸 ${expect}×${expect}`, !!info && info.width === expect && info.height === expect, info ? `${info.width}×${info.height}` : '')
+  if (!info) return
+  let opaque = 0
+  let colored = 0
+  for (let i = 0; i < info.width * info.height; i++) {
+    const o = i * 4
+    const [r, g, b, a] = [info.png.data[o], info.png.data[o + 1], info.png.data[o + 2], info.png.data[o + 3]]
+    if (a > 200) {
+      opaque++
+      // 模板图要求前景为黑（或极深灰）；出现明显彩色说明还在用彩色图标
+      if (Math.abs(r - g) > 24 || Math.abs(g - b) > 24) colored++
+    }
+  }
+  const total = info.width * info.height
+  const ratio = ((opaque / total) * 100).toFixed(0)
+  ck(`${label} 背景透明、图形可见`, opaque > total * 0.05 && opaque < total * 0.85, `不透明占比 ${ratio}%`)
+  ck(`${label} 前景单色黑`, colored === 0, `彩色像素 ${colored}`)
+}
+
+// macOS 菜单栏：@1x 与 @2x 两档都要在，Electron 才会按屏幕缩放自选
+checkTemplate('resources/trayTemplate.png', 22)
+checkTemplate('resources/trayTemplate@2x.png', 44)
+
+// Windows 通知区：100%/125%/150%/200% DPI 各一档物理像素
+for (const px of [16, 20, 24, 32]) {
+  const file = `resources/tray-${px}.png`
+  if (!existsSync(file)) {
+    ck(`${file} 存在`, false)
+    continue
+  }
+  const info = pngInfo(file)
+  ck(`${file} 尺寸与 RGBA`, !!info && info.width === px && info.height === px && info.colorType === 6, info ? `${info.width}×${info.height}` : '解析失败')
+  if (info) {
+    let opaque = 0
+    for (let i = 0; i < info.width * info.height; i++) if (info.png.data[i * 4 + 3] > 200) opaque++
+    ck(`${file} 图形非空`, opaque > info.width * info.height * 0.2, `不透明占比 ${((opaque / (info.width * info.height)) * 100).toFixed(0)}%`)
+  }
+}
 
 const failed = checks.filter((ok) => !ok).length
 console.log(`\n${checks.length - failed}/${checks.length} 通过`)

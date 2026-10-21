@@ -4,6 +4,7 @@ import type { AuthProvider, PublicCredential } from '@shared/types'
 import { Modal } from './Modal'
 import { MaskedText } from './MaskedText'
 import { Select } from './Select'
+import { Seg } from './Seg'
 import { useConfirm } from './ConfirmDialog'
 import type { ToastKind } from './Toast'
 import { copyText } from '../lib/clipboard'
@@ -215,6 +216,9 @@ export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): Re
   return (
     <>
       <div className="topbar">
+        <span className="topbar-icon">
+          <KeyRound size={16} />
+        </span>
         <h1>账号</h1>
         <span className="sub">用于自动登录的身份凭据</span>
         <span className="spacer" />
@@ -226,7 +230,7 @@ export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): Re
 
       <div className="content">
         <div className="log-toolbar">
-          <div className="search-box" style={{ width: 260 }}>
+          <div className="search-box">
             <Search size={14} />
             <input
               placeholder="检索显示名称、用户名或备注…"
@@ -265,7 +269,7 @@ export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): Re
           <div className="cred-list">
             {list.length === 0 && (
               <div className="cred-empty">
-                <KeyRound size={34} strokeWidth={1.4} className="empty-icon" />
+                <KeyRound size={36} strokeWidth={1.4} className="empty-icon" />
                 <div>
                   还没有保存任何凭据。添加后，在站点上「添加账号」时可以直接选用，
                   登录页会自动填好用户名、密码与两步验证码。
@@ -278,7 +282,7 @@ export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): Re
             )}
             {list.length > 0 && filtered.length === 0 && (
               <div className="cred-empty">
-                <Search size={30} strokeWidth={1.4} className="empty-icon" />
+                <Search size={36} strokeWidth={1.4} className="empty-icon" />
                 <div>没有匹配的凭据，调整检索或筛选条件试试。</div>
                 <button className="btn small" onClick={resetFilters}>
                   重置条件
@@ -342,8 +346,8 @@ export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): Re
           </div>
         </div>
 
-        <div className="hint" style={{ paddingLeft: 2, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
-          <ShieldCheck size={14} style={{ flex: 'none', marginTop: 3, color: 'var(--ok)' }} />
+        <div className="hint hint-inline">
+          <ShieldCheck size={14} />
           <span>
             密码与两步验证密钥经系统密钥加密后落盘，保存后无法再读出；
             界面只显示是否已保存。凭据仅在本机使用，不会上传。
@@ -360,17 +364,15 @@ export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): Re
         >
           <div className="modal-field">
             <label className="modal-label">登录方式</label>
-            <div className="seg">
-              {(['github', 'linuxdo', 'password'] as AuthProvider[]).map((p) => (
-                <button
-                  key={p}
-                  className={draft.provider === p ? 'seg-item active' : 'seg-item'}
-                  onClick={() => setDraft({ ...draft, provider: p })}
-                >
-                  {providerLabel(p)}
-                </button>
-              ))}
-            </div>
+            <Seg
+              value={draft.provider}
+              items={(['github', 'linuxdo', 'password'] as AuthProvider[]).map((p) => ({
+                key: p,
+                label: providerLabel(p)
+              }))}
+              onChange={(p) => setDraft({ ...draft, provider: p })}
+              ariaLabel="登录方式"
+            />
           </div>
 
           <div className="modal-field">
@@ -417,7 +419,7 @@ export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): Re
               onChange={(e) => setDraft({ ...draft, password: e.target.value })}
             />
             {draft.provider === 'password' && (
-              <div className="hint" style={{ marginTop: 6 }}>
+              <div className="hint">
                 邮箱/密码登录直接调用站点登录接口，密码会加密保存。
               </div>
             )}
@@ -428,9 +430,9 @@ export function CredentialsView({ onToast, onChanged, maskAccounts }: Props): Re
               两步验证密钥
               <span className="modal-label-hint">（TOTP，可选）</span>
             </label>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="field-row">
               <input
-                style={{ flex: 1 }}
+                className="input-flex"
                 value={draft.totpSecret}
                 placeholder={draft.id ? '保持不变' : 'Base32 密钥，例如 JBSWY3DPEHPK3PXP'}
                 onChange={(e) => setDraft({ ...draft, totpSecret: e.target.value })}

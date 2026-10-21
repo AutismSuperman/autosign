@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { CheckinMode, Site } from '@shared/types'
 import { Modal } from './Modal'
+import { Seg } from './Seg'
 import { MODE_LABEL } from '../lib/format'
 
 interface Props {
@@ -60,17 +61,12 @@ export function EditSiteDialog({ site, onClose, onSubmit }: Props): React.JSX.El
 
       <div className="modal-field">
         <label className="modal-label">签到方式</label>
-        <div className="seg">
-          {MODES.map((m) => (
-            <button
-              key={m}
-              className={mode === m ? 'seg-item active' : 'seg-item'}
-              onClick={() => setMode(m)}
-            >
-              {MODE_LABEL[m]}
-            </button>
-          ))}
-        </div>
+        <Seg
+          value={mode}
+          items={MODES.map((m) => ({ key: m, label: MODE_LABEL[m] }))}
+          onChange={setMode}
+          ariaLabel="签到方式"
+        />
       </div>
 
       <div className="hint">修改地址不会重新探测站点协议与人机验证配置；站点形态大改时建议移除后重新添加。</div>

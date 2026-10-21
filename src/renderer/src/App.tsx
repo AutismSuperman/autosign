@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
+import type { AppInfo, UpdateStatus } from '@shared/ipc'
 import type { AppConfig, AuthProvider, LogEntry, Site } from '@shared/types'
 import { Sidebar } from './components/Sidebar'
+import { TitleBar } from './components/TitleBar'
 import { SitesView } from './components/SitesView'
 import { SettingsView } from './components/SettingsView'
 import { LogsView } from './components/LogsView'
@@ -101,6 +103,22 @@ export function App(): React.JSX.Element {
     applyTheme(theme)
     return watchSystemTheme(theme, () => applyTheme(theme))
   }, [theme])
+
+  // 版本与更新状态：标题栏据此显示版本号，有新版本时追加 new 徽标
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
+  useEffect(() => {
+    void window.api.app.info().then((info) => {
+      setAppInfo(info)
+      document.documentElement.dataset.platform = info.platform
+    })
+    void window.api.update.current().then(setUpdateStatus)
+    return window.api.update.onChange(setUpdateStatus)
+  }, [])
+  const hasUpdate =
+    updateStatus.state === 'available' ||
+    updateStatus.state === 'ready' ||
+    updateStatus.state === 'manual'
 
   const updateSettings = useCallback(
     async (patch: Parameters<typeof window.api.config.updateSettings>[0]) => {
@@ -403,15 +421,24 @@ export function App(): React.JSX.Element {
   /** 切换排序：金额类默认从高到低，名称默认从 A 到 Z。 */
   if (!config) {
     return (
-      <div className="app-loading">
-        <LoaderCircle size={30} className="rotating" style={{ color: 'var(--accent)' }} />
-        <div>正在加载…</div>
+      <div className="app-frame">
+        <TitleBar collapsed={false} hasUpdate={false} />
+        <div className="app-loading">
+          <LoaderCircle size={30} className="rotating" />
+          <div>正在加载…</div>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="shell">
+    <div className="app-frame">
+      <TitleBar
+        collapsed={config.settings.sidebarCollapsed}
+        version={appInfo?.version}
+        hasUpdate={hasUpdate}
+      />
+      <div className="shell">
       <Sidebar
         sites={config.sites}
         visibleSites={sidebarSites}
@@ -525,6 +552,7 @@ export function App(): React.JSX.Element {
         )
       })()}
       <ToastHost toasts={toasts} onDismiss={dismiss} />
+      </div>
     </div>
   )
 }

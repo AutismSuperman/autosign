@@ -56,7 +56,6 @@ export function Modal(props: Props): React.JSX.Element {
         ref={ref}
         tabIndex={-1}
         className={wide ? 'modal modal-wide' : 'modal'}
-        style={{ outline: 'none' }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

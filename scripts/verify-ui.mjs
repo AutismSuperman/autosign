@@ -102,7 +102,7 @@ ck('下拉菜单不遮挡触发器的位置计算正常', (await ev(`(() => {
   const m = document.querySelector('.zselect-menu').getBoundingClientRect()
   return m.top >= t.bottom && Math.abs(m.left - t.left) < 2
 })()`)) === true)
-ck('下拉菜单沿用暗色主题背景', (await ev(`getComputedStyle(document.querySelector('.zselect-menu')).backgroundColor`)) === 'rgb(21, 25, 34)', await ev(`getComputedStyle(document.querySelector('.zselect-menu')).backgroundColor`))
+ck('下拉菜单沿用暗色主题背景', (await ev(`getComputedStyle(document.querySelector('.zselect-menu')).backgroundColor`)) === 'rgb(35, 35, 39)', await ev(`getComputedStyle(document.querySelector('.zselect-menu')).backgroundColor`))
 // 选中「GitHub」后收起，触发器显示所选值
 await ev(`[...document.querySelectorAll('.zselect-option')].find(o=>o.textContent.includes('GitHub'))?.click()`)
 await sleep(400)

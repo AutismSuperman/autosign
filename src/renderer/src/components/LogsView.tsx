@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import type { LogEntry, LogLevel, Site } from '@shared/types'
 import { MaskedText } from './MaskedText'
+import { Seg } from './Seg'
 import { containsIdentifier, splitByIdentifiers } from '../lib/mask'
 import { useConfirm } from './ConfirmDialog'
 
@@ -161,6 +162,9 @@ export function LogsView({ logs, sites, maskAccounts, onReload, onClear }: Props
   return (
     <>
       <div className="topbar">
+        <span className="topbar-icon">
+          <ScrollText size={16} />
+        </span>
         <h1>运行日志</h1>
         <span className="sub">
           {filtered.length === logs.length
@@ -184,18 +188,8 @@ export function LogsView({ logs, sites, maskAccounts, onReload, onClear }: Props
       </div>
       <div className="content">
         <div className="log-toolbar">
-          <div className="seg">
-            {FILTERS.map((f) => (
-              <button
-                key={f.key}
-                className={level === f.key ? 'seg-item active' : 'seg-item'}
-                onClick={() => setLevel(f.key)}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-          <div className="search-box" style={{ width: 260 }}>
+          <Seg value={level} items={FILTERS} onChange={setLevel} ariaLabel="日志级别" />
+          <div className="search-box">
             <Search size={14} />
             <input
               placeholder="搜索日志内容…"
@@ -209,13 +203,13 @@ export function LogsView({ logs, sites, maskAccounts, onReload, onClear }: Props
         <div className="panel">
           {logs.length === 0 && (
             <div className="cred-empty">
-              <ScrollText size={34} strokeWidth={1.4} className="empty-icon" />
+              <ScrollText size={36} strokeWidth={1.4} className="empty-icon" />
               <div>暂无日志。签到、登录与调度都会记录在这里。</div>
             </div>
           )}
           {logs.length > 0 && filtered.length === 0 && (
             <div className="cred-empty">
-              <Search size={30} strokeWidth={1.4} className="empty-icon" />
+              <Search size={36} strokeWidth={1.4} className="empty-icon" />
               <div>没有匹配的日志，调整过滤条件试试。</div>
             </div>
           )}

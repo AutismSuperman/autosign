@@ -2,14 +2,19 @@ import { useEffect, useState } from 'react'
 import {
   Activity,
   CalendarClock,
+  Clock,
+  Eye,
+  EyeOff,
   HardDriveDownload,
   Minimize2,
   Monitor,
   Moon,
   Network,
   Palette,
+  PanelLeft,
   RefreshCw,
   RotateCw,
+  Settings2,
   ShieldCheck,
   Sun
 } from 'lucide-react'
@@ -17,6 +22,7 @@ import type { AppInfo, UpdateStatus } from '@shared/ipc'
 import type { ProxyProbeResult, Settings, ThemeMode } from '@shared/types'
 import { Select } from './Select'
 import type { SelectOption } from './Select'
+import { Seg } from './Seg'
 import type { ToastKind } from './Toast'
 
 interface Props {
@@ -78,18 +84,30 @@ export function SettingsView(props: Props): React.JSX.Element {
   return (
     <>
       <div className="topbar">
+        <span className="topbar-icon">
+          <Settings2 size={16} />
+        </span>
         <h1>设置</h1>
         <span className="sub">代理、定时签到与界面</span>
       </div>
 
       <div className="content">
-        <div className="panel">
+        <div className="panel settings-panel">
           <h2>
-            <Network size={15} />
+            <Network size={16} />
             网络代理
           </h2>
           <div className="field">
-            <div className="field-label">代理模式</div>
+            <span className="field-icon">
+              <Network size={16} />
+            </span>
+            <div className="field-text">
+              <div className="field-label">代理模式</div>
+              <span className="field-hint">
+                部分网络环境下目标站点直连会被重置，此时需要代理。跟随系统会读取 Windows
+                注册表 / macOS scutil / 环境变量。
+              </span>
+            </div>
             <div className="field-body">
               <Select
                 value={settings.proxy.mode}
@@ -102,19 +120,21 @@ export function SettingsView(props: Props): React.JSX.Element {
                 ariaLabel="代理模式"
                 minWidth={180}
               />
-              <span className="field-hint">
-                部分网络环境下目标站点直连会被重置，此时需要代理。跟随系统会读取 Windows
-                注册表 / macOS scutil / 环境变量。
-              </span>
             </div>
           </div>
 
           {settings.proxy.mode === 'manual' && (
             <div className="field">
-              <div className="field-label">代理地址</div>
+              <span className="field-icon">
+                <Network size={16} />
+              </span>
+              <div className="field-text">
+                <div className="field-label">代理地址</div>
+                <span className="field-hint">支持 http:// 与 socks5:// 两种协议；留空等同直连。</span>
+              </div>
               <div className="field-body">
                 <input
-                  style={{ width: 320 }}
+                  className="input-wide"
                   placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
                   value={proxyUrl}
                   onChange={(e) => setProxyUrl(e.target.value)}
@@ -126,16 +146,18 @@ export function SettingsView(props: Props): React.JSX.Element {
                   <Activity size={13} />
                   {probing ? '探测中…' : '测试连通'}
                 </button>
-                <span className="field-hint">
-                  支持 http:// 与 socks5:// 两种协议；留空等同直连。
-                </span>
               </div>
             </div>
           )}
 
           {settings.proxy.mode !== 'manual' && (
             <div className="field">
-              <div className="field-label">连通性</div>
+              <span className="field-icon">
+                <Activity size={16} />
+              </span>
+              <div className="field-text">
+                <div className="field-label">连通性</div>
+              </div>
               <div className="field-body">
                 <button className="btn small" onClick={() => void runProbe()} disabled={probing}>
                   <Activity size={13} />
@@ -153,13 +175,19 @@ export function SettingsView(props: Props): React.JSX.Element {
           )}
         </div>
 
-        <div className="panel">
+        <div className="panel settings-panel">
           <h2>
-            <CalendarClock size={15} />
+            <CalendarClock size={16} />
             定时签到
           </h2>
           <div className="field">
-            <div className="field-label">自动签到</div>
+            <span className="field-icon">
+              <CalendarClock size={16} />
+            </span>
+            <div className="field-text">
+              <div className="field-label">自动签到</div>
+              <span className="field-hint">启用后由主进程在后台执行，不依赖窗口是否打开。</span>
+            </div>
             <div className="field-body">
               <label className="check-label">
                 <input
@@ -173,13 +201,18 @@ export function SettingsView(props: Props): React.JSX.Element {
                 />
                 启用
               </label>
-              <span className="field-hint">
-                启用后由主进程在后台执行，不依赖窗口是否打开。
-              </span>
             </div>
           </div>
           <div className="field">
-            <div className="field-label">执行时间</div>
+            <span className="field-icon">
+              <Clock size={16} />
+            </span>
+            <div className="field-text">
+              <div className="field-label">执行时间</div>
+              <span className="field-hint">
+                建议设为 08:05 之后：多数站点的奖励周期在北京时间 08:00 切换。
+              </span>
+            </div>
             <div className="field-body">
               <input
                 type="time"
@@ -202,41 +235,39 @@ export function SettingsView(props: Props): React.JSX.Element {
                 />
                 仅工作日
               </label>
-              <span className="field-hint">
-                建议设为 08:05 之后：多数站点的奖励周期在北京时间 08:00 切换。
-              </span>
             </div>
           </div>
         </div>
 
-        <div className="panel">
+        <div className="panel settings-panel">
           <h2>
-            <Palette size={15} />
+            <Palette size={16} />
             界面
           </h2>
           <div className="field">
-            <div className="field-label">主题</div>
-            <div className="field-body">
-              <div className="seg">
-                {THEME_OPTIONS.map((t) => {
-                  const Icon = t.icon
-                  return (
-                    <button
-                      key={t.key}
-                      className={settings.theme === t.key ? 'seg-item active' : 'seg-item'}
-                      onClick={() => void props.onChange({ theme: t.key })}
-                    >
-                      <Icon size={13} />
-                      {t.label}
-                    </button>
-                  )
-                })}
-              </div>
+            <span className="field-icon">
+              <Palette size={16} />
+            </span>
+            <div className="field-text">
+              <div className="field-label">主题</div>
               <span className="field-hint">跟随系统会随操作系统的深浅色自动切换。</span>
+            </div>
+            <div className="field-body">
+              <Seg
+                value={settings.theme}
+                items={THEME_OPTIONS}
+                onChange={(key) => void props.onChange({ theme: key })}
+                ariaLabel="主题"
+              />
             </div>
           </div>
           <div className="field">
-            <div className="field-label">侧栏</div>
+            <span className="field-icon">
+              <PanelLeft size={16} />
+            </span>
+            <div className="field-text">
+              <div className="field-label">侧栏</div>
+            </div>
             <div className="field-body">
               <label className="check-label">
                 <input
@@ -249,7 +280,15 @@ export function SettingsView(props: Props): React.JSX.Element {
             </div>
           </div>
           <div className="field">
-            <div className="field-label">隐藏站点</div>
+            <span className="field-icon">
+              <EyeOff size={16} />
+            </span>
+            <div className="field-text">
+              <div className="field-label">隐藏站点</div>
+              <span className="field-hint">
+                关闭后可让已隐藏的站点重新出现在侧栏，账号与数据不会丢失。
+              </span>
+            </div>
             <div className="field-body">
               <label className="check-label">
                 <input
@@ -259,13 +298,19 @@ export function SettingsView(props: Props): React.JSX.Element {
                 />
                 隐藏的站点不在列表显示
               </label>
-              <span className="field-hint">
-                关闭后可让已隐藏的站点重新出现在侧栏，账号与数据不会丢失。
-              </span>
             </div>
           </div>
           <div className="field">
-            <div className="field-label">账号打码</div>
+            <span className="field-icon">
+              <Eye size={16} />
+            </span>
+            <div className="field-text">
+              <div className="field-label">账号打码</div>
+              <span className="field-hint">
+                开启后账号名、登录账号与凭据用户名会替换成灰色遮罩块，
+                日志里的账号标识同样被遮住，方便截图分享。站点名不受影响。
+              </span>
+            </div>
             <div className="field-body">
               <label className="check-label">
                 <input
@@ -275,67 +320,83 @@ export function SettingsView(props: Props): React.JSX.Element {
                 />
                 隐藏账号与邮箱
               </label>
-              <span className="field-hint">
-                开启后账号名、登录账号与凭据用户名会替换成灰色遮罩块，
-                日志里的账号标识同样被遮住，方便截图分享。站点名不受影响。
-              </span>
             </div>
           </div>
           <div className="field">
-            <div className="field-label">关闭窗口</div>
-            <div className="field-body">
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--text-dim)' }}>
-                <Minimize2 size={14} />
-                最小化到系统托盘
-              </span>
+            <span className="field-icon">
+              <Minimize2 size={16} />
+            </span>
+            <div className="field-text">
+              <div className="field-label">关闭窗口</div>
               <span className="field-hint">
                 点击窗口关闭按钮后应用会收进托盘，定时签到继续在后台运行；
                 在托盘图标上右键选择「退出」才会真正结束应用。
               </span>
             </div>
+            <div className="field-body">
+              <span className="field-static">
+                <Minimize2 size={14} />
+                最小化到系统托盘
+              </span>
+            </div>
           </div>
         </div>
 
-        <div className="panel">
+        <div className="panel settings-panel">
           <h2>
-            <ShieldCheck size={15} />
+            <ShieldCheck size={16} />
             安全
           </h2>
           <div className="field">
-            <div className="field-label">凭据加密</div>
-            <div className="field-body">
-              {secure?.encryptionAvailable ? (
-                <span className="tag ok">系统加密可用</span>
-              ) : (
-                <span className="tag err">系统加密不可用</span>
-              )}
+            <span className="field-icon">
+              <ShieldCheck size={16} />
+            </span>
+            <div className="field-text">
+              <div className="field-label">凭据加密</div>
               <span className="field-hint">
                 会话 Cookie 与访问令牌使用操作系统密钥保护
                 {secure?.platform === 'win32' ? '（Windows DPAPI）' : ''}；
                 不可用时会拒绝写入，不会降级为明文。
               </span>
             </div>
+            <div className="field-body">
+              {secure?.encryptionAvailable ? (
+                <span className="tag ok">系统加密可用</span>
+              ) : (
+                <span className="tag err">系统加密不可用</span>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="panel">
+        <div className="panel settings-panel">
           <h2>
-            <HardDriveDownload size={15} />
+            <HardDriveDownload size={16} />
             版本与更新
           </h2>
           <div className="field">
-            <div className="field-label">当前版本</div>
-            <div className="field-body">
-              <span className="version-badge">v{info?.version ?? '—'}</span>
+            <span className="field-icon">
+              <HardDriveDownload size={16} />
+            </span>
+            <div className="field-text">
+              <div className="field-label">当前版本</div>
               <span className="field-hint">
                 {info && !info.updaterAvailable
                   ? '开发模式构建，不支持应用内更新；安装版会在后台自动检查。'
                   : '应用启动后会在后台检查更新，下载完成后退出时自动安装。'}
               </span>
             </div>
+            <div className="field-body">
+              <span className="version-badge">v{info?.version ?? '—'}</span>
+            </div>
           </div>
           <div className="field">
-            <div className="field-label">检查更新</div>
+            <span className="field-icon">
+              <RefreshCw size={16} />
+            </span>
+            <div className="field-text">
+              <div className="field-label">检查更新</div>
+            </div>
             <div className="field-body">
               <button
                 className="btn small"

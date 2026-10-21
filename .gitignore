@@ -14,8 +14,15 @@ dist/
 *.png
 !build/icon.png
 !resources/icon.png
-# macOS 菜单栏模板图，运行时必需，缺失会导致托盘图标空白
+!resources/brand.png
+# macOS 菜单栏模板图（@1x + @2x 两档），运行时必需，缺失会导致托盘图标空白或发虚
 !resources/trayTemplate.png
+!resources/trayTemplate@2x.png
+# Windows 托盘按 DPI 分档图标，运行时必需
+!resources/tray-16.png
+!resources/tray-20.png
+!resources/tray-24.png
+!resources/tray-32.png
 # README 用的界面截图，全部由演示数据生成
 !docs/images/*.png
 .shot.mjs

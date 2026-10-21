@@ -179,6 +179,12 @@ await sleep(2000)
 
 // ---- 暗色 ----
 await shot('sites-dark')
+// 打码态：一键遮住账号身份，便于截图分享（对应 docs/images/masked.png）
+await ev(`document.querySelector('.topbar .btn[aria-pressed]')?.click()`)
+await sleep(400)
+await shot('sites-masked-dark')
+await ev(`document.querySelector('.topbar .btn[aria-pressed]')?.click()`)
+await sleep(400)
 await nav('账号')
 await shot('credentials-dark')
 await nav('运行日志')

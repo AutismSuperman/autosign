@@ -12,6 +12,7 @@ import {
   Globe,
   GripVertical,
   KeyRound,
+  LayoutGrid,
   LogIn,
   Pencil,
   Plus,
@@ -365,6 +366,9 @@ export function SitesView(props: Props): React.JSX.Element {
 
   const topbar = (
     <div className="topbar">
+      <span className="topbar-icon">
+        <LayoutGrid size={16} />
+      </span>
       <h1>{scopeName ?? '站点'}</h1>
       <span className="sub">
         {query.trim()
@@ -375,7 +379,7 @@ export function SitesView(props: Props): React.JSX.Element {
           : `${props.sites.length} 个站点 · ${totalAccounts} 个账号`}
       </span>
       <span className="spacer" />
-      <div className="search-box" style={{ width: 240 }}>
+      <div className="search-box">
         <Search size={14} />
         <input
           placeholder="检索站点、账号或凭据…"
@@ -434,10 +438,10 @@ export function SitesView(props: Props): React.JSX.Element {
         {topbar}
         <div className="content">
           <div className="empty">
-            <Globe size={42} strokeWidth={1.4} className="empty-icon" />
+            <Globe size={36} strokeWidth={1.4} className="empty-icon" />
             <div className="empty-title">还没有可见的站点</div>
             <div>从内置目录添加站点，或在侧栏「显示全部」中恢复已隐藏的站点。</div>
-            <button className="btn primary" onClick={props.onAddSite} style={{ marginTop: 6 }}>
+            <button className="btn primary" onClick={props.onAddSite}>
               <Plus size={14} />
               添加站点
             </button>
@@ -479,17 +483,17 @@ export function SitesView(props: Props): React.JSX.Element {
       <div className="content">
         {visibleSites.length === 0 && (
           <div className="empty">
-            <Search size={38} strokeWidth={1.4} className="empty-icon" />
+            <Search size={36} strokeWidth={1.4} className="empty-icon" />
             <div className="empty-title">没有匹配的站点或账号</div>
             <div>试试站点名、域名、账号名，或凭据的邮箱。</div>
-            <button className="btn" onClick={() => setQuery('')} style={{ marginTop: 6 }}>
+            <button className="btn" onClick={() => setQuery('')}>
               清除检索
             </button>
           </div>
         )}
         {visibleSites.map(({ site, accounts }) => (
           <div
-            className={siteCardClass(site)}
+            className={`${siteCardClass(site)}${dragId === site.id ? ' dragging' : ''}`}
             id={`site-${site.id}`}
             key={site.id}
             draggable={manualOrder}
@@ -497,7 +501,6 @@ export function SitesView(props: Props): React.JSX.Element {
             onDragOver={(e) => e.preventDefault()}
             onDrop={() => dropOn(site.id)}
             onDragEnd={() => setDragId(null)}
-            style={{ opacity: dragId === site.id ? 0.5 : undefined }}
           >
             <div className="site-head">
               <span
@@ -633,11 +636,11 @@ export function SitesView(props: Props): React.JSX.Element {
               return (
                 <div
                   className={
-                    checking
+                    (checking
                       ? 'account-row is-checking'
                       : refreshing
                         ? 'account-row is-refreshing'
-                        : 'account-row'
+                        : 'account-row') + (dragAccountId === account.id ? ' dragging' : '')
                   }
                   key={account.id}
                   draggable={manualAccountOrder}
@@ -647,7 +650,6 @@ export function SitesView(props: Props): React.JSX.Element {
                   }}
                   onDrop={() => dropAccountOn(site, account.id)}
                   onDragEnd={() => setDragAccountId(null)}
-                  style={{ opacity: dragAccountId === account.id ? 0.5 : undefined }}
                 >
                   <span
                     className={manualAccountOrder ? 'account-drag' : 'account-drag is-locked'}

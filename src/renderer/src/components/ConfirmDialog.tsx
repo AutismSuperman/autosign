@@ -48,8 +48,8 @@ export function useConfirm(): {
   const dialog = state ? (
     <Modal
       title={
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          {state.danger && <TriangleAlert size={16} style={{ color: 'var(--err)' }} />}
+        <span className="modal-title">
+          {state.danger && <TriangleAlert size={16} className="modal-title-icon" />}
           {state.title}
         </span>
       }
