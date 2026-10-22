@@ -19,8 +19,28 @@ interface StatusPayload {
     github_oauth?: boolean
     linuxdo_oauth?: boolean
     github_client_id?: string
+    quota_per_unit?: number | string
     [k: string]: unknown
   }
+}
+
+/**
+ * 读取站点声明的配额单位。
+ *
+ * 实测字段位置不统一：多数放在 data.quota_per_unit，个别的在响应根层。
+ * 两种都看，取第一个能转成正数的；都没有或非法就返回 undefined，
+ * 由调用方沿用默认值 —— 绝不猜一个数字出来。
+ */
+export function readQuotaPerUnit(payload: unknown): number | undefined {
+  const root = payload as (StatusPayload & { quota_per_unit?: unknown }) | null
+  if (!root || typeof root !== 'object') return undefined
+  const candidates = [root.data?.quota_per_unit, root.quota_per_unit]
+  for (const raw of candidates) {
+    if (raw === undefined || raw === null) continue
+    const n = typeof raw === 'number' ? raw : Number(raw)
+    if (Number.isFinite(n) && n > 0) return n
+  }
+  return undefined
 }
 
 export async function probeSite(baseUrl: string, proxy?: string): Promise<SiteProbeResult> {
@@ -63,6 +83,7 @@ export async function probeSite(baseUrl: string, proxy?: string): Promise<SitePr
       githubOAuth: data.github_oauth === true,
       linuxdoOAuth: data.linuxdo_oauth === true,
       githubClientId: typeof data.github_client_id === 'string' ? data.github_client_id : undefined,
+      quotaPerUnit: readQuotaPerUnit(json),
       wafSolved: res.wafSolved
     }
   } catch (e) {

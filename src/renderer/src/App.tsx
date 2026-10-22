@@ -61,6 +61,27 @@ export function App(): React.JSX.Element {
     total: number
     current: string
   } | null>(null)
+  /**
+   * 批量任务的停止闸门。
+   *
+   * 循环体在每处理下一个账号前检查它。用 ref 而不是 state：
+   * 点击「停止」时循环正在 await，state 更新不会传进已经闭包住的函数，
+   * 只有 ref 能让正在跑的循环立刻看到。
+   */
+  const stopRef = useRef<{ kind: 'checkin' | 'refresh' } | null>(null)
+  const [stoppedKind, setStoppedKind] = useState<'checkin' | 'refresh' | null>(null)
+  /**
+   * 用函数读写闸门，而不是直接访问 stopRef.current。
+   * 直接访问会被 TypeScript 的控制流分析收窄成 null（函数里刚赋过值），
+   * 于是循环里的 `stopRef.current?.kind` 被判成 never。
+   */
+  const stopRequested = useCallback(
+    (kind: 'checkin' | 'refresh'): boolean => stopRef.current?.kind === kind,
+    []
+  )
+  const resetStop = useCallback((): void => {
+    stopRef.current = null
+  }, [])
   const { toasts, showToast, dismiss } = useToasts()
 
   /**
@@ -282,10 +303,16 @@ export function App(): React.JSX.Element {
     if (targets.length === 0) return
 
     beginBusy('checkin-all')
+    resetStop()
+    setStoppedKind(null)
     setBatchProgress({ kind: 'checkin', done: 0, total: targets.length, current: '' })
     let ok = 0
+    let skipped = 0
+    let handled = 0
     try {
       for (let i = 0; i < targets.length; i++) {
+        // 用户点了「停止」：当前这个跑完就收工，不再开新的
+        if (stopRequested('checkin')) break
         const t = targets[i]
         setBatchProgress({
           kind: 'checkin',
@@ -298,10 +325,12 @@ export function App(): React.JSX.Element {
         try {
           const r = await window.api.account.checkin(t.account.id)
           if (r.ok) ok++
+          if (r.ok && r.already) skipped++
         } catch {
           // 单个账号失败不打断整批
         }
         endBusy(`checkin:${t.account.id}`)
+        handled = i + 1
         // 与额度刷新一致：处理完一个就前进一格，最后一个结束时到 100%
         setBatchProgress({
           kind: 'checkin',
@@ -311,13 +340,23 @@ export function App(): React.JSX.Element {
         })
         await refresh()
       }
+      const stopped = handled < targets.length
+      const done = `成功 ${ok} / ${targets.length}${
+        skipped > 0 ? `（其中 ${skipped} 个今日已签，自动跳过）` : ''
+      }`
       showToast(
-        `${activeSiteId ? scopeSites[0]?.name ?? '当前站点' : '全部站点'}签到完成：成功 ${ok} / ${targets.length}`,
-        ok === targets.length ? 'success' : 'info'
+        stopped
+          ? `已停止签到：处理 ${handled} / ${targets.length}，${done}`
+          : `${
+              activeSiteId ? scopeSites[0]?.name ?? '当前站点' : '全部站点'
+            }签到完成：${done}`,
+        stopped || ok !== handled ? 'info' : 'success'
       )
     } finally {
       endBusy('checkin-all')
+      resetStop()
       setBatchProgress(null)
+      setStoppedKind(null)
       await refresh()
     }
   }, [scopeSites, activeSiteId, refresh, showToast, beginBusy, endBusy, batchName])
@@ -336,10 +375,15 @@ export function App(): React.JSX.Element {
     if (targets.length === 0) return
 
     beginBusy('refresh-all')
+    resetStop()
+    setStoppedKind(null)
     setBatchProgress({ kind: 'refresh', done: 0, total: targets.length, current: '' })
     let ok = 0
+    let handled = 0
     try {
       for (let i = 0; i < targets.length; i++) {
+        // 单个账号可能要等 20 秒超时，没有停止入口时用户只能干等
+        if (stopRequested('refresh')) break
         const t = targets[i]
         setBatchProgress({
           kind: 'refresh',
@@ -355,6 +399,7 @@ export function App(): React.JSX.Element {
           // 单个账号失败不打断整批
         }
         endBusy(`status:${t.account.id}`)
+        handled = i + 1
         // 让进度条在处理完一个账号后就前进一格，最后一个账号结束时到 100%
         setBatchProgress({
           kind: 'refresh',
@@ -364,16 +409,34 @@ export function App(): React.JSX.Element {
         })
         await refresh()
       }
+      const stopped = handled < targets.length
       showToast(
-        `额度已刷新：成功 ${ok} / ${targets.length}`,
-        ok === targets.length ? 'success' : 'info'
+        stopped
+          ? `已停止刷新：处理 ${handled} / ${targets.length}，成功 ${ok}`
+          : `额度已刷新：成功 ${ok} / ${targets.length}`,
+        !stopped && ok === targets.length ? 'success' : 'info'
       )
     } finally {
       endBusy('refresh-all')
+      resetStop()
       setBatchProgress(null)
+      setStoppedKind(null)
       await refresh()
     }
   }, [scopeSites, refresh, showToast, beginBusy, endBusy, batchName])
+
+  /**
+   * 停止批量任务。
+   *
+   * 只改闸门标记，不中断正在进行的那个请求：正在跑的签到可能已经发出去了，
+   * 强行取消会让「发了请求但没读回执」的状态落到本地，反而更乱。
+   * 因此当前账号处理完就停，进度文案会说明实际处理了几个。
+   */
+  const stopBatch = useCallback(() => {
+    if (!batchProgress) return
+    stopRef.current = { kind: batchProgress.kind }
+    setStoppedKind(batchProgress.kind)
+  }, [batchProgress])
 
   const removeAccount = useCallback(
     async (accountId: string) => {
@@ -473,6 +536,8 @@ export function App(): React.JSX.Element {
             }))}
             busy={busyKeys}
             batchProgress={batchProgress}
+            stopping={stoppedKind !== null}
+            onStopBatch={stopBatch}
             activeSiteId={activeSiteId}
             siteSort={config.settings.siteSort}
             siteSortDir={config.settings.siteSortDir}

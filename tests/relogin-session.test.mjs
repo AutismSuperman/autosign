@@ -104,6 +104,16 @@ check(
   'GitHub user_session 算登录态',
   isProviderSessionCookie('.github.com', 'user_session', 'abc') === true
 )
+// GitHub 现在下发的是带 __Host- 前缀的名字；只认旧名字会让判定恒为 false，
+// 表现就是分区里明明有登录态，却每天都要求手动重新授权。
+check(
+  'GitHub __Host-user_session_same_site 算登录态',
+  isProviderSessionCookie('github.com', '__Host-user_session_same_site', 'abc') === true
+)
+check(
+  '_gh_sess 不算登录态（未登录也会下发，只是 CSRF 会话）',
+  isProviderSessionCookie('.github.com', '_gh_sess', 'abc') === false
+)
 check(
   'Linux DO _t 算登录态',
   isProviderSessionCookie('.linux.do', '_t', 'abc') === true

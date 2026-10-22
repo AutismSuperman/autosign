@@ -115,6 +115,12 @@ export const IPC = {
 
 export interface ZcodeApi {
   config: {
+    /**
+     * 读取完整配置。
+     *
+     * 返回值里**不含**会话 Cookie / 令牌 / 第三方登录态备份：
+     * 这些只在主进程内存与加密文件之间流动，渲染进程拿不到。
+     */
     get(): Promise<AppConfig>
     updateSettings(patch: Partial<Settings>): Promise<AppConfig>
     addSite(input: { catalogId?: string; name?: string; baseUrl?: string }): Promise<AppConfig>

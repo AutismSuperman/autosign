@@ -35,7 +35,13 @@ import { acquireTurnstileToken } from './sites/turnstile'
 import { reloginCheckin } from './sites/relogin'
 import { logoutSession } from './sites/logout'
 import { isSessionExpired, rebuildSession, reloginCapability } from './sites/reloginSession'
-import { hasProviderSession, silentReauth } from './sites/silentReauth'
+import {
+  ensureProviderSession,
+  hasProviderSession,
+  silentReauth,
+  snapshotProviderSession
+} from './sites/silentReauth'
+import { parseProviderCookies } from './sites/providerSession'
 import { startKeepAlive } from './sites/keepAlive'
 import { migrateAccountPartition } from './sites/partitionMigrate'
 import { readApiKeys } from './sites/tokens'
@@ -137,7 +143,7 @@ async function currentProxy(): Promise<string> {
 }
 
 function siteOf(accountId: string): { site: Site; account: Account } | undefined {
-  const config = store.get()
+  const config = store.getInternal()
   for (const site of config.sites) {
     const account = site.accounts.find((a) => a.id === accountId)
     if (account) return { site, account }
@@ -207,6 +213,7 @@ async function syncCheckinReceipt(site: Site, accountId: string, snapshot: Quota
     ok: true,
     already: true,
     reward,
+    rewardSource: 'site',
     message: `站点核对：${snapshot.checkinSource ?? '今日签到记录'}`
   }
   await patchAccount(accountId, { lastCheckin: receipt })
@@ -249,7 +256,7 @@ async function tryRebuildSession(
       return r.ok ? r.token : undefined
     },
     // GitHub / Linux DO 会话过期：先用分区残留登录态静默重授权；
-    // 分区登录态也失效时，退回用凭据里的密码重新登录第三方站点
+    // 分区里没有了就用账号记录里的加密备份补回去，再退回凭据密码
     silentReauth: (provider) => {
       const credential = account.credentialId
         ? store.findCredential(account.credentialId)
@@ -262,16 +269,21 @@ async function tryRebuildSession(
               password: credential.password,
               totpSecret: credential.totpSecret
             }
-          : undefined
+          : undefined,
+        providerCookies: store.findAccount(account.id)?.providerCookies
       })
     }
   })
   if (!attempt.ok) return { ok: false, error: attempt.error }
 
+  // 静默授权会轮换 GitHub 的 user_session，备份必须跟着更新，
+  // 否则下次恢复回去的是一份已作废的登录态。
+  const providerCookies = await snapshotProviderSession(site, account.id)
   await patchAccount(account.id, {
     cookie: attempt.cookie ?? account.cookie,
     token: attempt.token ?? account.token,
-    siteUserId: attempt.siteUserId ?? account.siteUserId
+    siteUserId: attempt.siteUserId ?? account.siteUserId,
+    ...(providerCookies ? { providerCookies } : {})
   })
   store.log('ok', '会话重建', `${site.name} / ${account.label}：用保存的凭据重新登录成功`, {
     siteId: site.id,
@@ -413,8 +425,9 @@ async function doStatus(accountId: string): Promise<StatusResultDto> {
 async function ensureSiteProbed(siteId: string, proxy: string): Promise<Site | undefined> {
   const site = store.findSite(siteId)
   if (!site) return undefined
-  // 已探测过（有 sitekey 或明确知道站点未开启验证）就直接用
-  if (site.turnstileSiteKey || site.turnstile === false) return site
+  // 已探测过（有 sitekey 或明确知道站点未开启验证）就直接用；
+  // 但配额单位可能是在旧版本里漏采的，缺它会让金额整体换算错，需要补探一次
+  if ((site.turnstileSiteKey || site.turnstile === false) && site.quotaPerUnit) return site
 
   const probe = await probeSite(site.baseUrl, proxy)
   if (!probe.ok) return site
@@ -424,6 +437,8 @@ async function ensureSiteProbed(siteId: string, proxy: string): Promise<Site | u
     target.turnstile = probe.turnstile
     target.turnstileSiteKey = probe.turnstileSiteKey
     target.backendVersion = probe.systemName
+    // 站点声明的配额单位：取错会让所有金额整体差若干倍
+    if (probe.quotaPerUnit) target.quotaPerUnit = probe.quotaPerUnit
     // 探测能纠正形态误判（例如自定义站点）
     if (probe.kind) target.kind = probe.kind
   })
@@ -437,6 +452,13 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
   const site = (await ensureSiteProbed(hit.site.id, proxy)) ?? hit.site
   const sDeps = sessionDeps(site.id, accountId, proxy)
 
+  // 本地回执已证明今天签过：直接跳过，不发任何请求。
+  // 批量签到与定时任务都会走这里，跳过已签账号才不会每次都白撞人机验证、
+  // 也不会对重登类站点做无意义的登出重登。
+  if (checkedInThisPeriod(hit.account.lastCheckin, Date.now())) {
+    return { ok: true, already: true, message: '今日已签到，已跳过' }
+  }
+
   // RELOGIN 站点：签到 ≡ 登出后重登，且必须以余额增量确认到账。
   // 注意这里刻意不先做会话续期 —— 会话被保活就永远登不出去，也就领不到奖。
   if (site.mode === 'RELOGIN') {
@@ -449,6 +471,7 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
         ok: true,
         already: true,
         reward: recon.reward,
+        rewardSource: 'site',
         message: `今日已签到（${recon.source ?? '站点记录'}）`
       }
       await patchAccount(accountId, { lastCheckin: receipt })
@@ -460,8 +483,12 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
     }
     const current = store.findAccount(accountId) ?? hit.account
     const credential = current.credentialId ? store.findCredential(current.credentialId) : undefined
-    // 分区里还留着第三方登录态时，即使没存密码也能静默点授权登回来
-    const providerAlive = await hasProviderSession(site, current)
+    // 分区里还留着第三方登录态时，即使没存密码也能静默点授权登回来；
+    // 分区没了但账号记录里有加密备份，同样能恢复 —— 判定必须与重建实现一致，
+    // 否则会出现「检查说不放行 → 根本不登出」，每天白错过一次领取。
+    const providerAlive =
+      (await hasProviderSession(site, current)) ||
+      parseProviderCookies(current.providerCookies).length > 0
 
     const result = await reloginCheckin(site, current, {
       proxy,
@@ -498,6 +525,12 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
     })
 
     if (result.ok) {
+      // 到账已由余额增量确认，但增量 ≠ 奖励金额（含同时段消耗与其它入账）。
+      // 回执里优先写站点今日发放记录里的真实金额；读不到就留空，绝不写增量。
+      const detail = await reconcileCheckin(site, store.findAccount(accountId) ?? hit.account, {
+        proxy,
+        session: sDeps
+      })
       await patchAccount(accountId, {
         // 重登成功即证明会话可用：清掉「需要手动登录」标记
         needsRelogin: false,
@@ -506,7 +539,8 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
           date: rewardDate(Date.now()),
           ok: true,
           already: false,
-          reward: result.reward,
+          reward: detail.checked ? detail.reward : undefined,
+          rewardSource: 'site',
           message: result.message
         }
       })
@@ -599,7 +633,7 @@ function broadcastConfigChanged(): void {
 
 /** 依次对全部账号执行一次签到，返回逐项结果（IPC 与托盘菜单共用）。 */
 async function runCheckinAll(): Promise<Array<CheckinResultDto & { accountId: string }>> {
-  const config = store.get()
+  const config = store.getInternal()
   const out: Array<CheckinResultDto & { accountId: string }> = []
   for (const site of config.sites) {
     for (const account of site.accounts) {
@@ -752,7 +786,7 @@ function registerIpc(): void {
       if (!entry) throw new Error('未知的站点目录项')
       const base = siteFromCatalog(entry)
       if (store.findSite(base.id)) return store.get()
-      // 内置目录也探测一次：sitekey 与形态由站点自己决定，不靠硬编码假设
+      // 内置目录也探测一次：sitekey、配额单位与形态由站点自己决定，不靠硬编码假设
       const probe = await probeSite(base.baseUrl, proxy)
       return store.mutate((config) => {
         if (config.sites.some((s) => s.id === base.id)) return
@@ -762,6 +796,7 @@ function registerIpc(): void {
           mode: probe.ok ? probe.mode : base.mode,
           turnstile: probe.ok ? probe.turnstile : undefined,
           turnstileSiteKey: probe.ok ? probe.turnstileSiteKey : undefined,
+          quotaPerUnit: probe.ok ? probe.quotaPerUnit : undefined,
           backendVersion: probe.ok ? probe.systemName : undefined,
           accounts: []
         })
@@ -783,6 +818,7 @@ function registerIpc(): void {
         custom: true,
         turnstile: probe.turnstile,
         turnstileSiteKey: probe.turnstileSiteKey,
+        quotaPerUnit: probe.quotaPerUnit,
         backendVersion: probe.systemName,
         accounts: []
       })
@@ -923,6 +959,11 @@ function registerIpc(): void {
       // 分区必须跟着最终账号 ID 走：重新授权时若用临时 draftId，
       // GitHub 登录态会留在另一套分区里，而账号之后读的是自己那套，
       // 于是每次静默重授权都「找不到登录态」，只能反复手动授权。
+      //
+      // 打开窗口前先把加密备份里的第三方登录态写回分区：分区可能因为
+      // 换机器 / 重装 / 清缓存而空了，补回去之后 GitHub 直接落在授权页，
+      // 用户只需确认（或由脚本自动点「Authorize」），不用重输密码。
+      await ensureProviderSession(site.id, existing?.id ?? draftId, existing?.providerCookies)
       const result = await runOAuth(site, existing?.id ?? draftId, provider as never, proxy, credential)
       if (!result.ok) {
         store.log('err', '授权', `${site.name}：${result.error}`, { siteId })
@@ -969,13 +1010,22 @@ function registerIpc(): void {
       // 取一次额度，验证会话有效并补全 siteUserId
       const freshAccount = store.findAccount(account.id) ?? account
       const snapshot = await readStatus(site, freshAccount, { proxy })
+      // 授权成功就把第三方登录态另存一份加密备份：
+      // 分区丢失（换机器 / 重装 / 清缓存）时靠它恢复，不必再打扰用户点一次授权。
+      // 密码登录没有第三方登录态，采到空值时会跳过写入。
+      const providerCookies = await snapshotProviderSession(site, account.id)
       if (snapshot.ok) {
         // 重新授权成功：清掉「需要手动登录」标记
-        await patchAccount(account.id, { lastStatus: snapshot, needsRelogin: false })
+        await patchAccount(account.id, {
+          lastStatus: snapshot,
+          needsRelogin: false,
+          ...(providerCookies ? { providerCookies } : {})
+        })
         await syncCheckinReceipt(site, account.id, snapshot)
         store.log('ok', '授权', `${site.name}：已登录 ${account.label}`, { siteId })
       } else {
         error = snapshot.error
+        if (providerCookies) await patchAccount(account.id, { providerCookies })
         store.log('warn', '授权', `${site.name}：登录成功但额度读取失败（${snapshot.error}）`, {
           siteId
         })
@@ -1226,7 +1276,7 @@ function scheduleNext(): void {
   setTimeout(async () => {
     try {
       store.log('info', '调度', '开始执行定时签到')
-      const config = store.get()
+      const config = store.getInternal()
       let ok = 0
       let failed = 0
       for (const site of config.sites) {
@@ -1254,7 +1304,7 @@ function scheduleNext(): void {
 /** 启动时把旧分区里的 Cookie 搬到统一分区，只做一次。 */
 async function migrateLegacyPartitions(): Promise<void> {
   let moved = 0
-  for (const site of store.get().sites) {
+  for (const site of store.getInternal().sites) {
     for (const account of site.accounts) {
       try {
         moved += await migrateAccountPartition(site, account.id)
@@ -1265,6 +1315,73 @@ async function migrateLegacyPartitions(): Promise<void> {
   }
   if (moved > 0) {
     store.log('info', '分区迁移', `已把 ${moved} 个历史会话 Cookie 迁入统一分区`)
+  }
+}
+
+/**
+ * 给还没有第三方登录态备份的 OAuth 账号补一份。
+ *
+ * 备份是「换机器 / 重装后还能静默重授权」的前提，但老版本从不保存它。
+ * 只补采分区里确实存在的登录态：分区里没有就跳过，绝不写空值，
+ * 这样升级后的用户不必重新授权一次也能用上自动恢复。
+ */
+async function backfillProviderSessions(): Promise<void> {
+  const pending = store
+    .getInternal()
+    .sites.flatMap((site) =>
+      site.accounts
+        .filter((a) => a.provider !== 'password' && !a.providerCookies)
+        .map((account) => ({ site, account }))
+    )
+  if (pending.length === 0) return
+
+  let saved = 0
+  for (const { site, account } of pending) {
+    try {
+      const cookies = await snapshotProviderSession(site, account.id)
+      if (!cookies) continue
+      await patchAccount(account.id, { providerCookies: cookies })
+      saved++
+    } catch {
+      // 单个账号采集失败不影响其余
+    }
+  }
+  if (saved > 0) {
+    store.log(
+      'info',
+      '登录态备份',
+      `已为 ${saved} 个账号保存第三方登录态，之后会话过期可自动恢复`
+    )
+  }
+}
+
+/**
+ * 给还没有配额单位的站点补探测一次。
+ *
+ * 旧版本不采集 quota_per_unit，金额一律按 500000 换算。站点若自定义了单位，
+ * 界面上所有金额都会整体差若干倍 —— 用户看到的「一堆不对的数据」。
+ * 补采一次即可修正，且只在不同步的站点上发请求。
+ */
+async function backfillQuotaUnits(): Promise<void> {
+  const pending = store.get().sites.filter((s) => !s.quotaPerUnit)
+  if (pending.length === 0) return
+  const proxy = await currentProxy()
+  let fixed = 0
+  for (const site of pending) {
+    try {
+      const probe = await probeSite(site.baseUrl, proxy)
+      if (!probe.ok || !probe.quotaPerUnit) continue
+      await store.mutate((config) => {
+        const target = config.sites.find((s) => s.id === site.id)
+        if (target && !target.quotaPerUnit) target.quotaPerUnit = probe.quotaPerUnit
+      })
+      fixed++
+    } catch {
+      // 单个站点探测失败不影响其余
+    }
+  }
+  if (fixed > 0) {
+    store.log('info', '站点探测', `已补齐 ${fixed} 个站点的配额单位，金额换算已校准`)
   }
 }
 
@@ -1399,6 +1516,10 @@ app.whenReady().then(async () => {
   await migrateLegacyPartitions()
   // 旧版本失败快照抹掉了额度数字，从日志里补回来
   await restoreLostAmounts()
+  // 旧版本没采集配额单位，金额会整体换算错；补探一次即可校准
+  void backfillQuotaUnits()
+  // 老账号还没有第三方登录态备份，补一份，之后会话过期可自动恢复
+  void backfillProviderSessions()
   // macOS 的 Dock 图标不受 BrowserWindow.icon 影响，必须单独设置；
   // 否则开发模式与未正确打包时会显示 Electron 默认图标。
   applyDockIcon()
@@ -1415,9 +1536,38 @@ app.whenReady().then(async () => {
   // 主动续期快过期的令牌：避免每次业务请求先吃一个 401 再去续期
   startKeepAlive({
     proxy: () => currentProxy(),
-    sites: () => store.get().sites,
+    sites: () => store.getInternal().sites,
     sessionFor: (siteId, accountId, proxy) => sessionDeps(siteId, accountId, proxy),
-    log: (message) => store.log('info', '会话保活', message)
+    log: (message) => store.log('info', '会话保活', message),
+    // 上次恢复失败的账号，后台隔一段时间再试一次：多数是瞬时抖动 / 限流 / 风控，
+    // 重试一次就通了，用户不必自己想起来去点「重新授权」
+    recover: async (accountId) => {
+      const hit = siteOf(accountId)
+      if (!hit) return { ok: false, error: '账号不存在' }
+      const proxy = await currentProxy()
+      const snapshot = await readStatus(hit.site, store.findAccount(accountId) ?? hit.account, {
+        proxy,
+        session: sessionDeps(hit.site.id, accountId, proxy)
+      })
+      if (!snapshot.ok && isSessionExpired(snapshot.error)) {
+        const rebuilt = await tryRebuildSession(
+          hit.site,
+          store.findAccount(accountId) ?? hit.account,
+          proxy
+        )
+        if (!rebuilt.ok) return { ok: false, error: rebuilt.error }
+        const after = await readStatus(hit.site, store.findAccount(accountId) ?? hit.account, {
+          proxy,
+          session: sessionDeps(hit.site.id, accountId, proxy)
+        })
+        if (!after.ok) return { ok: false, error: after.error }
+        await patchAccount(accountId, { lastStatus: after, needsRelogin: false })
+        return { ok: true }
+      }
+      if (!snapshot.ok) return { ok: false, error: snapshot.error }
+      await patchAccount(accountId, { lastStatus: snapshot, needsRelogin: false })
+      return { ok: true }
+    }
   })
 
   app.on('activate', () => {

@@ -38,12 +38,18 @@ export function isSessionExpired(message: string | undefined, status?: number): 
  *
  * 抽成纯函数是因为「能不能静默重授权」完全取决于它：判定写错一次，
  * 表现就是每天都要求用户手动授权。
+ *
+ * GitHub 现在下发的是 `__Host-user_session_same_site`（带 __Host- 前缀，
+ * 真正的登录凭据），旧版才是 `user_session`。只认旧名字会让判定恒为
+ * false，于是分区里明明有登录态也被判成「没有」，每次都要手动授权。
+ * `_gh_sess` 只是 CSRF 会话、未登录也会下发，必须排除。
  */
 export function isProviderSessionCookie(domain: string, name: string, value: string): boolean {
   if (!value) return false
   const host = (domain ?? '').toLowerCase().replace(/^\./, '')
   if (host !== 'github.com' && host !== 'www.github.com' && host !== 'linux.do') return false
-  return /^(user_session|_t|_forum_session)$/i.test(name)
+  if (name === '_gh_sess') return false
+  return /^(?:__Host-user_session_same_site|user_session|_t|_forum_session)$/i.test(name)
 }
 
 export interface ReloginCapability {

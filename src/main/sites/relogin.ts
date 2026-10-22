@@ -32,6 +32,9 @@ const MIN_CREDIT_USD = 15
  *
  * 只有余额增量达标才算到账。响应里的 success / sign_in 一律不作为依据，
  * 因为这些接口的返回值与实际到账并不同步。
+ *
+ * 注意：**增量不是奖励金额**。同时段的正常消耗、其它入账都会算进去，
+ * 所以这里只回答「有没有到账」，绝不把它当作「签到 +$xx」展示。
  */
 export function judgeCredit(
   before: number | undefined,
@@ -46,19 +49,19 @@ export function judgeCredit(
   }
   const delta = Math.round((after - before) * 100) / 100
   if (delta >= MIN_CREDIT_USD) {
-    return { credited: true, delta, message: `重登成功，+$${delta.toFixed(2)} 已到账` }
+    return { credited: true, delta, message: '重登成功，已检测到额度增加' }
   }
   if (delta > 0) {
     return {
       credited: false,
       delta,
-      message: `已重登，余额仅增加 $${delta.toFixed(2)}，可能今日已领或正在消耗，请刷新核对`
+      message: `已重登，额度仅增加 $${delta.toFixed(2)}，可能今日已领或正在消耗，请刷新核对`
     }
   }
   return {
     credited: false,
     delta,
-    message: '已重登，未检测到余额增加，可能今日已领，请刷新核对'
+    message: '已重登，未检测到额度增加，可能今日已领，请刷新核对'
   }
 }
 
@@ -82,6 +85,10 @@ export interface ReloginDeps {
 export interface ReloginResult {
   ok: boolean
   already: boolean
+  /**
+   * 确认到账后的余额增量。仅用于日志与「有没有到账」的诊断，
+   * **不是签到奖励金额**，不能当成「+$xx」的奖励展示。
+   */
   reward?: number
   message: string
   /** 需要用户手动重新登录（凭据或第三方登录态都无法自动恢复时）。 */

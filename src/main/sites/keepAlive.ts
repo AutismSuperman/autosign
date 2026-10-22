@@ -20,11 +20,28 @@ import type { SessionDeps } from './session'
 /** 扫描间隔：5 分钟。比 15 分钟的 token 寿命短得多，足够在过期前续上。 */
 const KEEPALIVE_INTERVAL_MS = 5 * 60_000
 
+/**
+ * 会话自动恢复的扫描间隔：30 分钟。
+ *
+ * 被动恢复（刷新额度、签到时顺带重建）只在用户或定时任务触发时发生。
+ * 如果那次重建恰好撞上网络抖动、站点限流或 WAF 拦截，账号就会一直挂着
+ * 「需要重新授权」，直到用户自己想起来点一下 —— 这正是「每天都要手动点」的由来。
+ * 后台每隔半小时再试一次，多数瞬时故障都能自愈。
+ */
+const RECOVER_INTERVAL_MS = 30 * 60_000
+
 export interface KeepAliveDeps {
   proxy: () => Promise<string>
   sites: () => Site[]
   sessionFor: (siteId: string, accountId: string, proxy: string) => SessionDeps
   log: (message: string) => void
+  /**
+   * 可选：对一个「会话已失效、自动恢复失败」的账号再试一次恢复。
+   *
+   * 由主进程实现为「重新读一次额度」（读通就说明恢复成功、标记会被清掉）。
+   * 不提供时只做令牌续期，行为与旧版一致。
+   */
+  recover?: (accountId: string) => Promise<{ ok: boolean; error?: string }>
 }
 
 /** 扫一遍所有账号，把快过期的令牌续掉。返回续期成功的数量。 */
@@ -52,6 +69,35 @@ export async function keepAliveOnce(deps: KeepAliveDeps): Promise<{ renewed: num
   return { renewed, total }
 }
 
+/**
+ * 扫一遍所有「需要手动登录」的账号，再试一次自动恢复。
+ *
+ * 只处理已经标记 needsRelogin 的账号：它们上一次恢复确实失败了，
+ * 这里给一次重试机会，成功就把标记清掉，用户完全不用介入。
+ * 不碰健康账号 —— 无意义的重建只会制造多余的登录会话。
+ */
+export async function recoverOnce(
+  deps: KeepAliveDeps
+): Promise<{ recovered: number; total: number }> {
+  if (!deps.recover) return { recovered: 0, total: 0 }
+  const pending = deps
+    .sites()
+    .flatMap((site) => site.accounts.map((account) => ({ site, account })))
+    .filter(({ account }) => account.needsRelogin === true)
+  if (pending.length === 0) return { recovered: 0, total: 0 }
+
+  let recovered = 0
+  for (const { account } of pending) {
+    try {
+      const r = await deps.recover(account.id)
+      if (r.ok) recovered++
+    } catch {
+      // 单个账号失败不影响其余
+    }
+  }
+  return { recovered, total: pending.length }
+}
+
 /** 启动保活定时器。返回停止函数。 */
 export function startKeepAlive(deps: KeepAliveDeps): () => void {
   let stopped = false
@@ -66,13 +112,30 @@ export function startKeepAlive(deps: KeepAliveDeps): () => void {
     }
   }
 
+  const recoverTick = async (): Promise<void> => {
+    if (stopped) return
+    try {
+      const r = await recoverOnce(deps)
+      if (r.recovered > 0) {
+        deps.log(`会话恢复：${r.recovered} / ${r.total} 个账号已自动恢复，无需手动授权`)
+      }
+    } catch {
+      // 恢复失败是静默的：下次扫描会再试
+    }
+  }
+
   // 启动后先跑一次，收掉已有快过期的令牌
   void tick()
   const timer = setInterval(() => void tick(), KEEPALIVE_INTERVAL_MS)
   timer.unref?.()
 
+  // 会话恢复单独一条较慢的节奏：它要真的重建会话，开销比续期大
+  const recoverTimer = setInterval(() => void recoverTick(), RECOVER_INTERVAL_MS)
+  recoverTimer.unref?.()
+
   return () => {
     stopped = true
     clearInterval(timer)
+    clearInterval(recoverTimer)
   }
 }

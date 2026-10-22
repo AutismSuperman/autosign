@@ -89,6 +89,14 @@ export interface Account {
   cookie?: string
   /** 系统访问令牌（加密落盘），可选。 */
   token?: string
+  /**
+   * 第三方登录态（GitHub / Linux DO 的 Cookie，序列化后加密落盘）。
+   *
+   * 分区里的 Cookie 会随浏览器内核清理、应用重装或过期而消失，一旦没了
+   * 静默重授权就只能请用户再点一次。这里留一份加密备份，会话过期时先把它
+   * 写回分区再走授权流程，做到「授权过一次就不再打扰」。
+   */
+  providerCookies?: string
   createdAt: number
   lastCheckin?: CheckinReceipt
   lastStatus?: QuotaSnapshot
@@ -109,6 +117,15 @@ export interface CheckinReceipt {
   ok: boolean
   already: boolean
   reward?: number
+  /**
+   * 奖励金额的来源。
+   *
+   * `site`：站点自己的今日发放记录（签到接口的 quota 或奖励流水），可直接展示。
+   * `delta`：重登前后余额差。它包含同时段的消耗与其它入账，**不是奖励金额**，
+   *   只用于判断「有没有到账」，绝不能在界面上当成「签到 +$xx」展示。
+   * 历史回执没有这个字段，读取时按 `already` 兜底（见 store.normalizeReceipt）。
+   */
+  rewardSource?: 'site' | 'delta'
   message: string
 }
 
@@ -171,6 +188,14 @@ export interface Site {
   turnstile?: boolean
   /** 探测得到的站点后端版本，便于诊断协议变化。 */
   backendVersion?: string
+  /**
+   * 站点的配额换算单位：多少 quota 折 1 美元。
+   *
+   * New API 默认 500000，但站点可以在 /api/status 里用 quota_per_unit 覆盖。
+   * 不按站点值换算，金额会整体放大或缩小若干倍，看起来就是「一堆不对的数据」。
+   * 为空表示沿用默认值。
+   */
+  quotaPerUnit?: number
   /** 用户自定义站点（不在内置目录中）。 */
   custom?: boolean
   /** 侧边栏隐藏（数据保留）。 */
@@ -270,6 +295,8 @@ export interface SiteProbeResult {
   githubOAuth?: boolean
   linuxdoOAuth?: boolean
   githubClientId?: string
+  /** 站点声明的配额单位（多少 quota 折 $1）；未声明时为空。 */
+  quotaPerUnit?: number
   error?: string
   /** 是否过 WAF 质询，用于诊断。 */
   wafSolved: boolean

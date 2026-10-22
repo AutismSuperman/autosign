@@ -1605,6 +1605,15 @@ html[data-platform='darwin'] .sidebar.collapsed {
   font-weight: 500;
 }
 
+/* 批量任务停止按钮：进度条右侧，不抢视觉重心但随时可点 */
+.batch-stop {
+  flex: none;
+  height: 24px;
+  padding: 0 9px;
+  font-size: var(--font-caption);
+  border-radius: 6px;
+}
+
 /* 进度条：批量签到与检查更新共用一套轨道/填充 */
 .batch-track,
 .update-track {

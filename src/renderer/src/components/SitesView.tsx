@@ -18,6 +18,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Square,
   Trash2,
   Zap
 } from 'lucide-react'
@@ -65,6 +66,9 @@ interface Props {
     total: number
     current: string
   } | null
+  /** 已经点了「停止」：当前账号跑完后收工，按钮据此禁用避免重复点击。 */
+  stopping: boolean
+  onStopBatch: () => void
   /** 侧栏选中了哪个站点；null 表示全部站点。 */
   activeSiteId: string | null
   /** 拖拽重排站点内账号。 */
@@ -460,7 +464,11 @@ export function SitesView(props: Props): React.JSX.Element {
         <div className="batch-bar" role="status" aria-live="polite">
           <RefreshCw size={14} className="rotating" />
           <span className="batch-text">
-            {props.batchProgress.kind === 'refresh' ? '正在刷新' : '正在签到'}{' '}
+            {props.stopping
+              ? '正在停止…'
+              : props.batchProgress.kind === 'refresh'
+                ? '正在刷新'
+                : '正在签到'}{' '}
             {Math.min(props.batchProgress.done + 1, props.batchProgress.total)} /{' '}
             {props.batchProgress.total}
             {props.batchProgress.current && (
@@ -477,6 +485,20 @@ export function SitesView(props: Props): React.JSX.Element {
               }}
             />
           </span>
+          {/* 18 个账号串行刷新要等半分钟以上，没有停止入口时只能干等 */}
+          <button
+            className="btn small batch-stop"
+            onClick={props.onStopBatch}
+            disabled={props.stopping}
+            title={
+              props.stopping
+                ? '当前账号处理完就停止'
+                : '处理完当前账号后停止，已完成的进度会保留'
+            }
+          >
+            <Square size={11} />
+            {props.stopping ? '停止中' : '停止'}
+          </button>
         </div>
       )}
 

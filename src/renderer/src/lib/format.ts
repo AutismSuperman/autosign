@@ -123,6 +123,27 @@ export function beijingTime(ts: number): string {
 }
 
 /**
+ * 签到奖励金额是否值得展示。
+ *
+ * 界面上的 `+$xx` 只应来自站点自己的今日发放记录。重登类站点的历史回执
+ * 里存的其实是**余额增量**（含同时段消耗与其它入账），既不是奖励金额，
+ * 也不能保证准确；把它们当奖励展示，账号行就会出现一堆互不相干、
+ * 每天还都不同的数字。这里统一挡掉：
+ *   - 标注为 delta 的一律不展示
+ *   - 超出合理区间（>= $1000）的也不展示，宁可不写金额
+ */
+export function showableReward(
+  receipt: { reward?: number; rewardSource?: 'site' | 'delta' } | undefined
+): number | undefined {
+  if (!receipt) return undefined
+  const v = receipt.reward
+  if (v === undefined || !Number.isFinite(v) || v < 0) return undefined
+  if (v >= 1000) return undefined
+  if (receipt.rewardSource === 'delta') return undefined
+  return v
+}
+
+/**
  * 签到状态文案。
  *
  * 过了北京时间 0 点，昨天的回执就失效：直接显示「未签」，
@@ -130,20 +151,30 @@ export function beijingTime(ts: number): string {
  * 签到成功后再变回「已签」。
  */
 export function checkinText(
-  receipt: { at: number; date: string; ok: boolean; already: boolean; reward?: number } | undefined,
+  receipt:
+    | {
+        at: number
+        date: string
+        ok: boolean
+        already: boolean
+        reward?: number
+        rewardSource?: 'site' | 'delta'
+      }
+    | undefined,
   now = Date.now()
 ): { label: string; reward?: number; stale: boolean; hint?: string } {
   if (!receipt?.ok) return { label: '未签', stale: false }
   const time = beijingTime(receipt.at)
+  const reward = showableReward(receipt)
   if (isCheckedToday(receipt, now)) {
     return {
       label: receipt.already ? '今日已签' : '已签',
-      reward: receipt.reward,
+      reward,
       stale: false
     }
   }
   // 跨天：今日尚未签到，但把上次记录留在悬停提示里
-  const hint = `上次签到 ${receipt.date} ${time}${receipt.reward ? `，+$${receipt.reward.toFixed(2)}` : ''}`
+  const hint = `上次签到 ${receipt.date} ${time}${reward ? `，+$${reward.toFixed(2)}` : ''}`
   return { label: '未签', stale: true, hint }
 }
 

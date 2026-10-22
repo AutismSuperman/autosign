@@ -33,13 +33,24 @@ const QUOTA_PER_UNIT = 500_000
  * 旧版本把 `quota_awarded`（如 10000000）直接写进回执，界面上就成了 1000 万。
  * 真正的签到奖励不会有四位数的美元金额，因此把 >= 1000 的值按配额单位折回美元。
  * 只影响旧数据，新回执在写入时就已换算。
+ *
+ * 同时给旧回执补上 `rewardSource`：重登类站点的历史回执记的是**余额增量**
+ * （含同时段消耗与其它入账），不是奖励金额。不标出来，界面就会继续把
+ * $20.90、$21.71 这类增量当成「签到 +$xx」展示，也就是用户看到的那堆错数字。
  */
-function normalizeReceipt(receipt: CheckinReceipt | undefined): CheckinReceipt | undefined {
-  if (!receipt || receipt.reward === undefined) return receipt
-  if (receipt.reward < 1000) return receipt
+function normalizeReceipt(
+  receipt: CheckinReceipt | undefined,
+  mode?: Site['mode']
+): CheckinReceipt | undefined {
+  if (!receipt) return receipt
+  const withSource: CheckinReceipt = receipt.rewardSource
+    ? receipt
+    : { ...receipt, rewardSource: mode === 'RELOGIN' && !receipt.already ? 'delta' : 'site' }
+  if (withSource.reward === undefined) return withSource
+  if (withSource.reward < 1000) return withSource
   return {
-    ...receipt,
-    reward: Math.round((receipt.reward / QUOTA_PER_UNIT) * 100) / 100
+    ...withSource,
+    reward: Math.round((withSource.reward / QUOTA_PER_UNIT) * 100) / 100
   }
 }
 
@@ -63,9 +74,10 @@ function defaultConfig(): AppConfig {
 }
 
 /** 落盘形态：敏感字段为密文。 */
-interface StoredAccount extends Omit<Account, 'cookie' | 'token'> {
+interface StoredAccount extends Omit<Account, 'cookie' | 'token' | 'providerCookies'> {
   cookie?: string
   token?: string
+  providerCookies?: string
 }
 
 interface StoredCredential extends Omit<Credential, 'password' | 'totpSecret'> {
@@ -80,6 +92,31 @@ interface StoredSite extends Omit<Site, 'accounts'> {
 interface StoredConfig extends Omit<AppConfig, 'sites' | 'credentials'> {
   sites: StoredSite[]
   credentials: StoredCredential[]
+}
+
+/**
+ * 抹掉会话凭据后的账号：可以安全地经 IPC 交给渲染进程。
+ *
+ * 存储里 cookie / token / providerCookies 都是明文（解密后），而 `get()` 的结果
+ * 会被整包发到渲染进程。界面只用得到额度、回执、标记这些字段，
+ * 会话凭据和第三方登录态备份一律不下发 —— 渲染进程拿到就等于凭据越界，
+ * 与「凭据只在主进程内存中短暂存在」的约定冲突。
+ */
+export type PublicAccount = Omit<Account, 'cookie' | 'token' | 'providerCookies'>
+
+export type PublicConfig = Omit<AppConfig, 'sites'> & {
+  sites: Array<Omit<Site, 'accounts'> & { accounts: PublicAccount[] }>
+}
+
+/** 把配置裁成可以跨进程传输的形态。 */
+export function toPublicConfig(config: AppConfig): PublicConfig {
+  return {
+    ...config,
+    sites: config.sites.map((site) => ({
+      ...site,
+      accounts: site.accounts.map(({ cookie: _c, token: _t, providerCookies: _p, ...rest }) => rest)
+    }))
+  }
 }
 
 export class ConfigStore {
@@ -134,7 +171,8 @@ export class ConfigStore {
         ...a,
         cookie: open(a.cookie),
         token: open(a.token),
-        lastCheckin: normalizeReceipt(a.lastCheckin)
+        providerCookies: open(a.providerCookies),
+        lastCheckin: normalizeReceipt(a.lastCheckin, s.mode)
       }))
     }))
     const credentials: Credential[] = (stored.credentials ?? []).map((c) => ({
@@ -170,6 +208,13 @@ export class ConfigStore {
         } else {
           delete out.token
         }
+        if (a.providerCookies) {
+          const sealed = seal(a.providerCookies)
+          if (sealed === null) throw new Error('系统加密不可用，已拒绝写入第三方登录态')
+          out.providerCookies = sealed
+        } else {
+          delete out.providerCookies
+        }
         return out
       })
     }))
@@ -196,7 +241,19 @@ export class ConfigStore {
     return { version: CONFIG_VERSION, sites, credentials, settings: config.settings }
   }
 
-  get(): AppConfig {
+  /**
+   * 对外读取配置：**不含会话凭据**。
+   *
+   * 这个方法的结果会被整包经 IPC 发给渲染进程，因此必须裁掉 cookie / token /
+   * 第三方登录态备份。主进程内部需要完整数据时用 `getInternal()`。
+   * 靠调用方自觉剥离不可靠 —— 多一条账号字段就多一次泄漏机会。
+   */
+  get(): PublicConfig {
+    return toPublicConfig(structuredClone(this.config))
+  }
+
+  /** 仅主进程内部使用：包含解密后的会话凭据。 */
+  getInternal(): AppConfig {
     return structuredClone(this.config)
   }
 
@@ -221,8 +278,12 @@ export class ConfigStore {
     return this.config.credentials.find((c) => c.id === credentialId)
   }
 
-  /** 读-改-写：mutator 直接修改传入的实时对象，返回后统一落盘。 */
-  async mutate(mutator: (config: AppConfig) => void): Promise<AppConfig> {
+  /**
+   * 读-改-写：mutator 直接修改传入的实时对象，返回后统一落盘。
+   *
+   * 返回值是对外视图（不含凭据），因此可以直接回给渲染进程。
+   */
+  async mutate(mutator: (config: AppConfig) => void): Promise<PublicConfig> {
     mutator(this.config)
     await this.persist()
     this.onChange?.()

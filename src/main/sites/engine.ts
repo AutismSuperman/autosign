@@ -48,6 +48,12 @@ export interface EngineDeps {
  */
 const QUOTA_PER_UNIT = 500_000
 
+/** 取站点实际使用的配额单位；站点没给或给了非法值时退回默认值。 */
+export function unitOf(site: Pick<Site, 'quotaPerUnit'>): number {
+  const u = site.quotaPerUnit
+  return typeof u === 'number' && Number.isFinite(u) && u > 0 ? u : QUOTA_PER_UNIT
+}
+
 /**
  * 把原始 quota 折算成美元。
  *
@@ -60,6 +66,34 @@ export function quotaToUsd(quota: number | undefined, unit = QUOTA_PER_UNIT): nu
   if (quota === undefined) return undefined
   if (quota > 0 && quota < 1000) return quota
   return Math.round((quota / unit) * 10000) / 10000
+}
+
+/**
+ * 余额字段的换算：严格按站点单位折算，不做「小值当美元」的猜测。
+ *
+ * 小值保护是给**奖励**字段准备的（有的站点 direct 给美元）。
+ * 用到余额上会出事：余额 quota=500（=$0.001）会被当成 $500 显示。
+ * 余额本身一定是 quota 单位，按单位换算即可。
+ */
+export function quotaToUsdExact(quota: number | undefined, unit = QUOTA_PER_UNIT): number | undefined {
+  if (quota === undefined) return undefined
+  return Math.round((quota / unit) * 10000) / 10000
+}
+
+/**
+ * 美元金额合理性上限。
+ *
+ * 签到奖励是个位数到几十美元的量级。换算结果一旦超过这个上限，
+ * 说明拿到的其实是 quota 原始值（例如单位取错、或字段本身已是 quota），
+ * 界面上就会冒出「+$1036.99」这种数字 —— 用户说的「一堆不对的数据」。
+ * 遇到这种情况宁可显示「金额未知」，也不展示一个明显错误的数。
+ */
+const MAX_PLAUSIBLE_REWARD_USD = 1000
+
+export function plausibleReward(v: number | undefined): number | undefined {
+  if (v === undefined) return undefined
+  if (!Number.isFinite(v) || v < 0 || v >= MAX_PLAUSIBLE_REWARD_USD) return undefined
+  return v
 }
 
 /** 金额展示统一保留两位小数，避免出现 29.357124 这种尾巴。 */
@@ -170,9 +204,12 @@ export async function readStatus(
 
     const available = finite(user, balanceFields(kind))
     const usedRaw = finite(user, usedFields(kind))
+    const unit = unitOf(site)
+    // 余额一定是 quota 单位：严格按单位折算，不能套用奖励字段的「小值当美元」保护。
+    // 否则余额 500（=$0.001）会被显示成 $500，界面就出现一堆对不上的数字。
     const availableUsd =
-      kind === 'NEWAPI' ? quotaToUsd(available) : available
-    const usedUsd = kind === 'NEWAPI' ? quotaToUsd(usedRaw) : usedRaw
+      kind === 'NEWAPI' ? quotaToUsdExact(available, unit) : available
+    const usedUsd = kind === 'NEWAPI' ? quotaToUsdExact(usedRaw, unit) : usedRaw
 
     const checkedLocal = checkedInThisPeriod(account.lastCheckin, now)
     let checkedToday = checkedLocal
@@ -266,7 +303,7 @@ export async function readCheckinState(
       return {
         known: true,
         checkedToday: data.checked_in_today === true,
-        reward: roundUsd(finite(data, ['reward', 'amount', 'quota_awarded']))
+        reward: plausibleReward(roundUsd(finite(data, ['reward', 'amount', 'quota_awarded'])))
       }
     }
 
@@ -280,7 +317,7 @@ export async function readCheckinState(
       stats?.checked_in_today === true || data.checked_in_today === true || !!rec
     // quota_awarded 是 quota 单位，必须先折成美元再展示
     const rewardRaw = (rec && finite(rec, ['quota_awarded', 'reward'])) ?? finite(stats ?? data, ['quota_awarded', 'reward'])
-    const reward = roundUsd(quotaToUsd(rewardRaw))
+    const reward = plausibleReward(roundUsd(quotaToUsd(rewardRaw, unitOf(site))))
     return { known: true, checkedToday, reward }
   } catch (e) {
     return {
@@ -326,11 +363,67 @@ export function matchTodayCheckinLog(
   return { found: false, known: false }
 }
 
-/** 只读奖励流水：GET /api/log/self?type=4（系统类），退化为全量最近 50 条。 */
+/**
+ * 纯函数：从 /api/log/self 的流水里找「今日系统到账」，作为签到文案未命中时的兜底。
+ *
+ * 登录即发放型站点（AgentRouter 等）的到账文案不一定含「签到」二字，
+ * 只按关键字匹配会漏判；漏判之后就只能退回「余额增量」，而增量里混着
+ * 同时段的消耗，每天都不一样 —— 界面上就成了 $20.90、$21.71 这种噪声。
+ *
+ * 判据（与上游一致）：
+ *   - type=4 的系统类流水
+ *   - 时间戳落在当前奖励周期（北京日界）内
+ *   - 有正额度：quota > 0 或文案里有正金额
+ *   - 排除一次性赠送（注册 / 邀请 / 兑换）与消耗类流水（消耗 / 使用 / 扣费 / 退款）：
+ *     它们同样带金额，但都不是签到发放，误判会把当天变成「已签」而漏签
+ * 接口按时间倒序，命中第一条（最新）即停。
+ */
+export function matchTodayCreditLog(
+  items: unknown,
+  nowMs: number
+): { found: boolean; reward?: number; known: boolean } {
+  const list = Array.isArray(items) ? items : []
+  const s0 = Math.floor(rewardEpochMs(nowMs) / 1000)
+  const e0 = s0 + 86_400
+  for (const raw of list) {
+    const o = raw as Record<string, unknown> | null
+    if (!o || typeof o !== 'object') continue
+    const type = Number(o.type ?? o.log_type ?? 0)
+    if (Number.isFinite(type) && type !== 0 && type !== 4) continue
+    const txt = String(o.content ?? o.description ?? o.remark ?? o.message ?? '')
+    if (/注册|邀请|兑换|充值|消耗|使用|扣费|退款|退订/.test(txt)) continue
+    let ts = Number(o.created_at ?? o.createdAt ?? o.timestamp ?? o.created_time ?? 0)
+    if (ts > 1e12) ts = Math.floor(ts / 1000)
+    if (!(ts > 0) || ts < s0 || ts >= e0) continue
+
+    const quota = finite(o, ['quota'])
+    // 文案里的金额才是可信的：签到条目的 quota 字段常为 0
+    const mm = txt.match(/[＄$]\s*([0-9]+(?:\.[0-9]+)?)/)
+    if (mm) {
+      const v = Math.round(Number(mm[1]) * 100) / 100
+      return { found: true, reward: plausibleReward(v), known: true }
+    }
+    if (quota !== undefined && quota > 0) {
+      return { found: true, reward: plausibleReward(roundUsd(quotaToUsd(quota))), known: true }
+    }
+    // 显然是一次系统事件但读不出金额：命中，但不编造数字
+    return { found: true, known: false }
+  }
+  return { found: false, known: false }
+}
+
+/**
+ * 只读奖励流水：GET /api/log/self?type=4（系统类），退化为全量最近 50 条。
+ *
+ * @param creditFallback 允许退到「今日系统到账」兜底。只对登录即发放型站点开启：
+ *   这类站点没有签到端点，到账文案也不含「签到」二字。BUTTON 站点必须关掉，
+ *   否则一次充值或赠送都会被误判成「今日已签」，反而漏签。
+ */
 export async function readTodayBonusLog(
   site: Site,
   account: Account,
-  deps: EngineDeps
+  deps: EngineDeps,
+  creditFallback = false
 ): Promise<{ found: boolean; reward?: number; known: boolean }> {
   if (kindOf(site) !== 'NEWAPI') return { found: false, known: false }
   const base = site.baseUrl.replace(/\/+$/, '')
@@ -347,24 +440,31 @@ export async function readTodayBonusLog(
       if (res.status !== 200) continue
       const json = parseJson<Record<string, unknown>>(res.body)
       if (!json || json.success === false) continue
-      const d = json.data as Record<string, unknown> | unknown[] | undefined
-      const wrap = (Array.isArray(d) ? undefined : d) as Record<string, unknown> | undefined
-      const items = Array.isArray(d)
-        ? d
-        : Array.isArray(wrap?.items)
-          ? (wrap!.items as unknown[])
-          : Array.isArray(wrap?.data)
-            ? (wrap!.data as unknown[])
-            : Array.isArray(wrap?.logs)
-              ? (wrap!.logs as unknown[])
-              : []
+      const items = pickLogItems(json)
+      // 先认明确的「签到」文案（最准），没有再退到「今日系统到账」兜底
       const hit = matchTodayCheckinLog(items, Date.now())
       if (hit.found) return hit
+      if (creditFallback) {
+        const credit = matchTodayCreditLog(items, Date.now())
+        if (credit.found) return credit
+      }
     } catch {
       // 单个端点失败继续下一个；都失败则如实返回未命中
     }
   }
   return { found: false, known: false }
+}
+
+/** 从各种嵌套形态里取出流水条目数组。 */
+export function pickLogItems(json: Record<string, unknown>): unknown[] {
+  const d = json.data as Record<string, unknown> | unknown[] | undefined
+  const wrap = (Array.isArray(d) ? undefined : d) as Record<string, unknown> | undefined
+  if (Array.isArray(d)) return d
+  for (const key of ['items', 'data', 'logs', 'records'] as const) {
+    const v = wrap?.[key]
+    if (Array.isArray(v)) return v
+  }
+  return []
 }
 
 export interface ReconcileResult {
@@ -387,7 +487,9 @@ export async function reconcileCheckin(
   if (state.known && state.checkedToday) {
     return { checked: true, reward: state.reward, source: '服务端签到记录' }
   }
-  const log = await readTodayBonusLog(site, account, deps)
+  // 只有「没有签到端点 / 登录即发放」的站点才允许把「今日系统到账」当成签到证据。
+  // BUTTON 站点误用这条兜底，会把一次充值或赠送判成已签，从而漏签。
+  const log = await readTodayBonusLog(site, account, deps, site.mode !== 'BUTTON')
   if (log.found) {
     return { checked: true, reward: log.reward, source: '站点日志今日签到记录' }
   }
@@ -428,6 +530,22 @@ export async function checkin(
   }
 
   if (mode === 'LOGIN_GRANT') {
+    // 登录即得：先跟站点核对，今日已有发放就如实报已签；
+    // 没有才提示去刷新（这类站点靠登录动作发放，签到端点本身不存在）
+    const recon = await reconcileCheckin(site, account, deps)
+    if (recon.checked) {
+      const reward = plausibleReward(recon.reward)
+      const receipt: CheckinReceipt = {
+        at: now,
+        date: rewardDate(now),
+        ok: true,
+        already: true,
+        reward,
+        rewardSource: 'site',
+        message: '今日已签到'
+      }
+      return { ok: true, already: true, reward, message: receipt.message, receipt }
+    }
     return {
       ok: false,
       already: false,
@@ -453,10 +571,11 @@ export async function checkin(
       date: rewardDate(now),
       ok: true,
       already: true,
-      reward: recon.reward,
+      reward: plausibleReward(recon.reward),
+      rewardSource: 'site',
       message: '今日已签到'
     }
-    return { ok: true, already: true, reward: recon.reward, message: receipt.message, receipt }
+    return { ok: true, already: true, reward: receipt.reward, message: receipt.message, receipt }
   }
 
   const kind: SiteKind = kindOf(site)
@@ -515,7 +634,8 @@ export async function checkin(
     const data = json?.data as Record<string, unknown> | undefined
     const reward = finite(data, ['quota_awarded', 'reward', 'quota'])
     // quota_awarded 是 quota 单位；reward/quota 若是直接金额，quotaToUsd 的小值保护会原样返回
-    const rewardUsd = rewardUnit && kind === 'NEWAPI' ? roundUsd(quotaToUsd(reward)) : reward
+    const rewardUsd =
+      rewardUnit && kind === 'NEWAPI' ? plausibleReward(roundUsd(quotaToUsd(reward, unitOf(site)))) : plausibleReward(reward)
 
     const receipt: CheckinReceipt = {
       at: now,
@@ -523,6 +643,7 @@ export async function checkin(
       ok: true,
       already: false,
       reward: rewardUsd,
+      rewardSource: 'site',
       message
     }
     return { ok: true, already: false, reward: rewardUsd, message, receipt }
@@ -571,7 +692,21 @@ export async function checkin(
       // 验证未通过时，回到站点核对一次：可能其实已签（登录即发放）
       const recheck = await reconcileCheckin(site, account, deps)
       if (recheck.checked) {
-        return { ok: true, already: true, reward: recheck.reward, message: '今日已签到' }
+        return {
+          ok: true,
+          already: true,
+          reward: plausibleReward(recheck.reward),
+          message: '今日已签到',
+          receipt: {
+            at: now,
+            date: rewardDate(now),
+            ok: true,
+            already: true,
+            reward: plausibleReward(recheck.reward),
+            rewardSource: 'site',
+            message: '今日已签到'
+          }
+        }
       }
       return { ok: false, already: false, message: tokenRes.error ?? '人机验证失败' }
     }
