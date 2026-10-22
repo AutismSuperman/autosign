@@ -151,8 +151,20 @@ ck('顶部标题仍是账号页', (await ev(`document.querySelector('.topbar h1'
 // 回到站点视图：侧栏「全部站点」是唯一入口（站点名也会匹配「站点」，必须用 label 精确匹配）
 await ev(`[...document.querySelectorAll('.nav-item')].find(n=>n.querySelector('.nav-label')?.textContent==='全部站点')?.click()`)
 await sleep(700)
-await ev(`[...document.querySelectorAll('.btn')].find(b=>b.textContent.trim()==='添加站点')?.click()`)
-await sleep(1200)
+// 轮询等按钮就绪再点：固定 sleep 在负载高的机器上会点空，
+// 后面一串断言就会连环失败（看起来像功能坏了）。
+for (let i = 0; i < 20; i++) {
+  const clicked = await ev(
+    `(() => { const b = [...document.querySelectorAll('.btn')].find(x => x.textContent.trim() === '添加站点'); if (!b) return false; b.click(); return true })()`
+  )
+  if (clicked) break
+  await sleep(200)
+}
+// 卡片网格在对话框渲染后才存在，等它出现而不是固定等 1.2 秒
+for (let i = 0; i < 40; i++) {
+  if ((await ev(`document.querySelectorAll('.catalog-card').length`)) > 0) break
+  await sleep(200)
+}
 ck('添加站点对话框打开', (await ev(`document.querySelector('.modal-head h2')?.textContent`)) === '添加站点')
 ck('使用卡片网格而非下拉框', (await ev(`document.querySelectorAll('.catalog-card').length`)) > 0, `${await ev(`document.querySelectorAll('.catalog-card').length`)} 张卡片`)
 ck('卡片显示站点名', (await ev(`document.querySelector('.catalog-name')?.textContent`))?.length > 0)
@@ -338,6 +350,50 @@ ck(
   '未打包时明确提示更新不可用',
   (await ev(`document.querySelector('.content')?.innerText || ''`)).includes('开发模式') ||
     (await ev(`[...document.querySelectorAll('.btn')].find(b=>b.textContent.trim()==='检查更新')?.disabled`)) === true
+)
+
+// --- 项目地址与下载地址常驻可见 ---
+// 需求：下载不了的时候，界面上必须能看见地址、能复制，而不是只有一个按钮。
+const links = JSON.parse(
+  (await ev(`JSON.stringify([...document.querySelectorAll('.link-row .link-value')].map(b => (b.textContent || '').trim()))`)) || '[]'
+)
+ck(
+  '设置页显示项目地址行',
+  links.some((u) => u === 'https://github.com/AutismSuperman/autosign'),
+  links.join(' | ')
+)
+ck('设置页显示下载地址行', links.some((u) => u.endsWith('/releases/latest')), links.join(' | '))
+ck(
+  '地址完整显示（不截断成省略号）',
+  links.length >= 2 && links.every((u) => u.startsWith('https://github.com/') && !u.includes('…')),
+  links.join(' | ')
+)
+ck('地址行有复制按钮', (await ev(`document.querySelectorAll('.link-row [title^="复制"]').length`)) >= 2)
+ck(
+  '地址行有在浏览器打开按钮',
+  (await ev(`document.querySelectorAll('.link-row [title^="在浏览器中打开"]').length`)) >= 2
+)
+ck(
+  '地址可被选中复制（不是纯装饰文本）',
+  (await ev(`getComputedStyle(document.querySelector('.link-row .link-value')).userSelect`)) !== 'none',
+  await ev(`getComputedStyle(document.querySelector('.link-row .link-value')).userSelect`)
+)
+// 点地址即复制：成功后给出 toast（不依赖具体剪贴板实现，只断言反馈路径）
+ck(
+  '点击地址会触发复制反馈',
+  (await ev(`(async () => {
+    const btn = document.querySelector('.link-row .link-value')
+    btn.click()
+    await new Promise(r => setTimeout(r, 400))
+    return [...document.querySelectorAll('.toast')].some(t => /已复制|复制失败/.test(t.innerText))
+  })()`, true)) === true
+)
+// 未检查更新时状态行不该是空白
+ck(
+  '未检查更新时状态行有说明',
+  (await ev(`document.querySelector('.content')?.innerText || ''`)).includes('尚未检查') ||
+    (await ev(`document.querySelector('.content')?.innerText || ''`)).includes('正在检查'),
+  await ev(`[...document.querySelectorAll('.settings-panel .field-static')].map(e=>e.textContent).join(' | ')`)
 )
 ck(
   '应用菜单栏已移除',

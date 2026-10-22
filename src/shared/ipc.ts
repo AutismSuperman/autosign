@@ -75,6 +75,15 @@ export interface AppInfo {
   /** 开发模式或未打包时为 false，设置页据此提示更新不可用。 */
   updaterAvailable: boolean
   platform: string
+  /**
+   * 项目主页与下载页地址。
+   *
+   * 由主进程统一给出而不是在界面里拼字符串：地址与发布仓库绑定，
+   * 只应有一个来源。界面上要能看见、能复制，避免「下载不了又不知道去哪下」。
+   */
+  repoUrl: string
+  /** 最新正式版 Release 页（手动下载入口）。 */
+  downloadUrl: string
 }
 
 export const IPC = {

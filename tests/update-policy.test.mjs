@@ -30,9 +30,11 @@ const {
   pickMacDownload,
   releaseAssetUrl,
   releasePageUrl,
+  repoHomeUrl,
   requiresManualInstall,
   resolveAssetUrl,
-  friendlyUpdateError
+  friendlyUpdateError,
+  RELEASE_REPO
 } = require('../.tmp/updatePolicy.cjs')
 
 const checks = []
@@ -97,6 +99,19 @@ ck(
   resolveAssetUrl('0.4.2', 'a.dmg').startsWith('https://github.com/')
 )
 ck('Release 页地址稳定', releasePageUrl().endsWith('/releases/latest'))
+
+// 项目地址与下载地址都由主进程给出，界面不再自己拼字符串。
+// 两者必须指向同一仓库，否则「下载不了又不知道去哪下」。
+ck(
+  '项目主页指向发布仓库',
+  repoHomeUrl() === `https://github.com/${RELEASE_REPO}`,
+  repoHomeUrl()
+)
+ck(
+  '下载页是同一仓库的 releases 页面',
+  releasePageUrl() === `${repoHomeUrl()}/releases/latest`,
+  releasePageUrl()
+)
 
 // 5. 报错翻译
 const zipErr = friendlyUpdateError('ZIP file not provided: [{"url":"x.dmg"}]')

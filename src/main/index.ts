@@ -63,6 +63,7 @@ import {
   quitAndInstall,
   updaterAvailable
 } from './updater'
+import { releasePageUrl, repoHomeUrl } from './updatePolicy'
 
 /**
  * 必须在读取任何 app 路径之前设置应用名。
@@ -1243,7 +1244,10 @@ function registerIpc(): void {
   ipcMain.handle(IPC.appInfo, () => ({
     version: appVersion(),
     updaterAvailable: updaterAvailable(),
-    platform: process.platform
+    platform: process.platform,
+    // 项目与下载地址由主进程给：发布仓库只应有一个来源，界面不要自己拼
+    repoUrl: repoHomeUrl(),
+    downloadUrl: releasePageUrl()
   }))
 
   ipcMain.handle(IPC.updateStatus, () => getUpdateStatus())

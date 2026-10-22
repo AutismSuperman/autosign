@@ -165,8 +165,9 @@ export async function checkForUpdates(fromUser = false): Promise<UpdateStatus> {
     emit({
       state: 'error',
       message: friendlyUpdateError(e instanceof Error ? e.message : String(e)),
-      // macOS 上任何更新失败都应有一个兜底入口，否则用户只能干等
-      manualUrl: process.platform === 'darwin' ? releasePageUrl() : undefined
+      // 任何平台失败都给一个兜底下载页：用户至少知道去哪里手动下载，
+      // 而不是只看到一句「检查更新失败」
+      manualUrl: releasePageUrl()
     })
   }
   return current
@@ -317,23 +318,22 @@ export function initUpdater(): void {
     emit({
       state: 'error',
       message,
-      manualUrl: process.platform === 'darwin' ? releasePageUrl() : undefined
+      // 同样不分平台：Windows 的自动更新也可能因为权限、杀软、网络失败，
+      // 这时给出下载页比只报一句错更有用
+      manualUrl: releasePageUrl()
     })
     if (interactive) {
       interactive = false
-      const manual = process.platform === 'darwin'
       void dialog.showMessageBox({
         type: 'error',
         title: '检查更新失败',
         message,
-        detail: manual
-          ? '可以稍后重试，或直接下载安装包覆盖安装。'
-          : '可以稍后重试；若持续失败，请到项目 Release 页手动下载。',
-        buttons: manual ? ['下载安装包', '好'] : ['好'],
-        defaultId: manual ? 0 : 0,
-        cancelId: manual ? 1 : 0
+        detail: '可以稍后重试，或到下面的项目 Release 页手动下载安装包覆盖安装。',
+        buttons: ['打开下载页', '好'],
+        defaultId: 0,
+        cancelId: 1
       }).then((r) => {
-        if (manual && r.response === 0) openDownloadPage()
+        if (r.response === 0) openDownloadPage()
       })
     }
   })

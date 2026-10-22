@@ -67,6 +67,11 @@ export function releasePageUrl(): string {
   return `https://github.com/${RELEASE_REPO}/releases/latest`
 }
 
+/** 项目主页：源码、Issue 与全部历史版本。 */
+export function repoHomeUrl(): string {
+  return `https://github.com/${RELEASE_REPO}`
+}
+
 /**
  * 原始报错里既有库内部信息，也有大段 JSON。这里只保留可操作的那一句，
  * 避免用户对着「ZIP file not provided: [{...}]」无从下手。

@@ -1772,6 +1772,50 @@ html[data-platform='darwin'] .sidebar.collapsed {
   min-width: 180px;
 }
 
+/* 更新状态 + 地址：失败/需手动安装时上下两行 */
+.update-status-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+/*
+ * 可复制的地址行。
+ *
+ * 地址用等宽字体完整显示、允许换行，不截断成省略号：
+ * 复制按钮和系统浏览器都不可用时，用户还得能把地址抄下来。
+ */
+.link-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin-top: 4px;
+}
+
+.link-value {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-family: 'Cascadia Mono', Consolas, 'Microsoft YaHei UI', monospace;
+  font-size: var(--font-caption);
+  text-align: left;
+  line-height: 1.5;
+  /* 长地址优先整体换行，而不是撑破设置行 */
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  user-select: text;
+}
+
+.link-value:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* ============ 账号打码遮罩 ============ */
 
 /* 开启打码后用来替代账号文本：一块灰条，不渲染任何原始字符 */

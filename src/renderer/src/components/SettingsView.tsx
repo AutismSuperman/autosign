@@ -2,8 +2,11 @@ import { useEffect, useState } from 'react'
 import {
   Activity,
   CalendarClock,
+  Check,
   Clock,
+  Copy,
   Eye,
+  ExternalLink,
   EyeOff,
   HardDriveDownload,
   Minimize2,
@@ -24,6 +27,7 @@ import { Select } from './Select'
 import type { SelectOption } from './Select'
 import { Seg } from './Seg'
 import type { ToastKind } from './Toast'
+import { copyText } from '../lib/clipboard'
 
 interface Props {
   settings: Settings
@@ -396,6 +400,11 @@ export function SettingsView(props: Props): React.JSX.Element {
             </span>
             <div className="field-text">
               <div className="field-label">检查更新</div>
+              <span className="field-hint">
+                自动更新失败、或想装别的版本时，用下面的下载地址手动下载安装包覆盖安装，
+                账号与配置都会保留。
+              </span>
+              <UpdateStatusText status={update} onToast={props.onToast} />
             </div>
             <div className="field-body">
               <button
@@ -420,11 +429,43 @@ export function SettingsView(props: Props): React.JSX.Element {
                 />
                 {update.state === 'checking' ? '检查中…' : '检查更新'}
               </button>
-              <UpdateStatusText
-                status={update}
-                onInstall={() => void window.api.update.install()}
-                onDownload={() => void window.api.update.openDownload()}
-              />
+              {update.state === 'ready' && (
+                <button className="btn small primary" onClick={() => void window.api.update.install()}>
+                  <RotateCw size={13} />
+                  重启安装
+                </button>
+              )}
+              {(update.state === 'manual' ||
+                (update.state === 'error' && !!update.manualUrl)) && (
+                <button className="btn small primary" onClick={() => void window.api.update.openDownload()}>
+                  <HardDriveDownload size={13} />
+                  下载安装包
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 项目地址与下载地址常驻显示：不依赖更新检查的结果，随时能找到 */}
+          <div className="field">
+            <span className="field-icon">
+              <ExternalLink size={16} />
+            </span>
+            <div className="field-text">
+              <div className="field-label">项目地址</div>
+              <span className="field-hint">源码、更新记录与问题反馈都在这里。</span>
+              <LinkRow label="项目主页" url={info?.repoUrl} onToast={props.onToast} />
+            </div>
+          </div>
+          <div className="field">
+            <span className="field-icon">
+              <HardDriveDownload size={16} />
+            </span>
+            <div className="field-text">
+              <div className="field-label">下载地址</div>
+              <span className="field-hint">
+                始终指向最新正式版；历史版本在项目主页的 Releases 里。
+              </span>
+              <LinkRow label="最新安装包" url={info?.downloadUrl} onToast={props.onToast} />
             </div>
           </div>
         </div>
@@ -434,23 +475,85 @@ export function SettingsView(props: Props): React.JSX.Element {
 }
 
 /**
+ * 一行可复制的地址。
+ *
+ * 交互选择：
+ *   - 地址本身用等宽字体完整显示（不截断成省略号），能手动选中，
+ *     这样即使复制按钮、系统浏览器都不可用，用户也能抄下来；
+ *   - 点地址即复制，右侧另有明确的「复制」与「打开」按钮，
+ *     避免只靠单击（对不知道可以点的用户没有提示）；
+ *   - 复制成功后按钮短暂变成对勾，给一个不打扰的确认。
+ *
+ * 地址还没读到时显示「读取中」占位，不在界面里写死一份地址 ——
+ * 那会成为第二个来源，改仓库时必然漏改。
+ */
+function LinkRow({
+  label,
+  url,
+  onToast
+}: {
+  label: string
+  url: string | undefined
+  onToast: (message: string, kind?: ToastKind) => void
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!copied) return
+    const t = window.setTimeout(() => setCopied(false), 1600)
+    return () => window.clearTimeout(t)
+  }, [copied])
+
+  if (!url) return <span className="field-static">读取中…</span>
+
+  const copy = async (): Promise<void> => {
+    const ok = await copyText(url)
+    if (ok) {
+      setCopied(true)
+      onToast(`${label}已复制`, 'success')
+    } else {
+      onToast('复制失败，请手动选中地址后复制', 'error')
+    }
+  }
+
+  return (
+    <span className="link-row">
+      <button className="link-value" onClick={() => void copy()} title="点击复制">
+        {url}
+      </button>
+      <button className="icon-btn tiny" onClick={() => void copy()} title={`复制${label}`}>
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+      </button>
+      <button
+        className="icon-btn tiny"
+        onClick={() => void window.api.app.openExternal(url)}
+        title={`在浏览器中打开${label}`}
+      >
+        <ExternalLink size={12} />
+      </button>
+    </span>
+  )
+}
+
+/**
  * 更新状态的一句话说明 + 就绪后的安装按钮。
  *
  * 状态本身在主进程维护，这里只负责翻译成用户能读懂的话，
  * 不重复维护「是否在下载」之类的判断。
+ *
+ * 失败与「无法应用内安装」这两种情况一律把下载地址原样写出来：
+ * 只给按钮的话，按钮点不动（没有默认浏览器、链接被拦）时用户就完全没辙了。
  */
 function UpdateStatusText({
   status,
-  onInstall,
-  onDownload
+  onToast
 }: {
   status: UpdateStatus
-  onInstall: () => void
-  onDownload: () => void
+  onToast: (message: string, kind?: ToastKind) => void
 }): React.JSX.Element | null {
   switch (status.state) {
     case 'idle':
-      return null
+      return <span className="field-static">尚未检查；启动 30 秒后会自动检查一次。</span>
     case 'checking':
       return <span className="tag">正在检查…</span>
     case 'none':
@@ -467,40 +570,26 @@ function UpdateStatusText({
         </span>
       )
     case 'ready':
-      return (
-        <>
-          <span className="tag ok">v{status.version} 已下载</span>
-          <button className="btn small primary" onClick={onInstall}>
-            <RotateCw size={13} />
-            重启安装
-          </button>
-        </>
-      )
+      return <span className="tag ok">v{status.version} 已下载，点右侧按钮重启安装</span>
     case 'manual':
       return (
-        <>
+        <span className="update-status-stack">
           <span className="tag accent" title="当前构建没有 Apple 开发者证书签名，系统不允许应用内安装">
-            发现 v{status.version}
+            发现 v{status.version}，需手动安装
           </span>
-          <button className="btn small primary" onClick={onDownload}>
-            <HardDriveDownload size={13} />
-            下载安装包
-          </button>
-        </>
+          <LinkRow label="安装包地址" url={status.url} onToast={onToast} />
+        </span>
       )
     case 'error':
       return (
-        <>
+        <span className="update-status-stack">
           <span className="tag err" title={status.message}>
             {status.message.length > 34 ? `${status.message.slice(0, 34)}…` : status.message}
           </span>
-          {status.manualUrl ? (
-            <button className="btn small" onClick={onDownload}>
-              <HardDriveDownload size={13} />
-              手动下载
-            </button>
-          ) : null}
-        </>
+          {status.manualUrl && (
+            <LinkRow label="下载地址" url={status.manualUrl} onToast={onToast} />
+          )}
+        </span>
       )
   }
 }
