@@ -111,6 +111,19 @@ check(
   checkinText(receipt({ already: true, reward: 25, rewardSource: 'site' }), NOW).label === '今日已签'
 )
 
+// ---- 已签但没有金额：不能只剩一个「已签」什么都不说 ----
+const noAmount = receipt({ rewardSource: 'site' })
+check(
+  '已签但无金额时悬停提示说明原因',
+  /站点未回传/.test(checkinText(noAmount, NOW).hint ?? ''),
+  checkinText(noAmount, NOW).hint
+)
+check(
+  '有金额时不出现「站点未回传」提示',
+  checkinText(site, NOW).hint === undefined,
+  String(checkinText(site, NOW).hint)
+)
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} passed`)
 if (failed.length) process.exit(1)

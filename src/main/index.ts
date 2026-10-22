@@ -29,7 +29,7 @@ import type {
   SiteProbeResult
 } from '../shared/types'
 import { probeSite } from './sites/probe'
-import { checkin, readStatus, reconcileCheckin } from './sites/engine'
+import { checkin, planCheckin, readStatus, reconcileCheckin } from './sites/engine'
 import { runOAuth } from './sites/oauth'
 import { acquireTurnstileToken } from './sites/turnstile'
 import { reloginCheckin } from './sites/relogin'
@@ -46,7 +46,7 @@ import { startKeepAlive } from './sites/keepAlive'
 import { migrateAccountPartition } from './sites/partitionMigrate'
 import { readApiKeys } from './sites/tokens'
 import { getSiteIcon } from './sites/favicon'
-import { checkedInThisPeriod, rewardDate } from './sites/profile'
+import { checkedInThisPeriod, needsRewardEnrichment, rewardDate } from './sites/profile'
 import { isUsableTotpSecret, secondsRemaining, totp } from './auth/totp'
 import { accountFromPasswordLogin, passwordLogin } from './auth/passwordLogin'
 import type { SessionDeps } from './sites/session'
@@ -199,22 +199,67 @@ function sessionDeps(siteId: string, accountId: string, proxy: string): SessionD
 }
 
 /**
- * 站点核对命中今日签到记录、但本地没有回执时补记回执。
- * 登录即发放型站点的额度由站点在登录动作里发放（网页登录、站点会话触发都算），
- * 本地重登流程看不到这笔钱；不补记回执徽章就会一直显示「未签」。
+ * 把站点核对到的今日签到信息写回回执。
+ *
+ * 两种用途：
+ *   1. 本地没有回执、但站点已有今日记录（登录即发放型站点的额度由登录动作发放，
+ *      本地重登流程看不到这笔钱）→ 补记一条回执，否则徽章一直显示「未签」。
+ *   2. 本地有回执、但金额不可信（历史「余额增量」）或缺失 → 用站点记录里的
+ *      真实金额替换，让金额重新显示出来；读不到就保持空白，绝不拿增量凑数。
+ *
+ * 无论哪种都会记下 rewardCheckedAt，避免下次刷新又立刻向站点问一遍。
  */
 async function syncCheckinReceipt(site: Site, accountId: string, snapshot: QuotaSnapshot): Promise<void> {
-  if (!snapshot.ok || !snapshot.siteChecked) return
+  // rewardChecked 表示这次读数确实向站点核对过；没有核对就什么都不用做
+  if (!snapshot.ok || !snapshot.rewardChecked) return
   const account = store.findAccount(accountId)
-  if (!account || checkedInThisPeriod(account.lastCheckin, Date.now())) return
+  if (!account) return
+  const now = Date.now()
+  const existing = account.lastCheckin
+  const localToday = checkedInThisPeriod(existing, now)
   const reward = snapshot.siteReward
+
+  // 核对没有命中站点记录：只记下这次尝试的时间。
+  // 不记的话，金额缺失的账号每次刷新都会再打两个请求，而结果不会变。
+  if (!snapshot.siteChecked) {
+    if (localToday && existing && existing.rewardCheckedAt === undefined) {
+      await patchAccount(accountId, { lastCheckin: { ...existing, rewardCheckedAt: now } })
+    }
+    return
+  }
+
+  if (localToday && existing) {
+    // 已有今日回执：只补/换金额，不动 at 与 already，保留原始签到时间与语义
+    if (existing.rewardSource === 'site' && existing.reward !== undefined) return
+    if (reward === undefined && existing.rewardSource === 'site') return
+    const next: CheckinReceipt = {
+      ...existing,
+      ...(reward !== undefined ? { reward, rewardSource: 'site' as const } : {}),
+      rewardCheckedAt: now
+    }
+    // 站点确实没有金额：把来源从「余额增量」改成「站点记录」，界面就不必再猜
+    if (reward === undefined) {
+      next.reward = undefined
+      next.rewardSource = 'site'
+    }
+    await patchAccount(accountId, { lastCheckin: next })
+    if (reward !== undefined) {
+      store.log('ok', '签到核对', `${site.name} / ${account.label}：已从站点记录补全签到金额 +$${reward}`, {
+        siteId: site.id,
+        accountId
+      })
+    }
+    return
+  }
+
   const receipt: CheckinReceipt = {
-    at: Date.now(),
-    date: rewardDate(Date.now()),
+    at: now,
+    date: rewardDate(now),
     ok: true,
     already: true,
     reward,
     rewardSource: 'site',
+    rewardCheckedAt: now,
     message: `站点核对：${snapshot.checkinSource ?? '今日签到记录'}`
   }
   await patchAccount(accountId, { lastCheckin: receipt })
@@ -368,7 +413,10 @@ async function restoreLostAmounts(): Promise<void> {
   }
 }
 
-async function doStatus(accountId: string): Promise<StatusResultDto> {
+async function doStatus(
+  accountId: string,
+  opts: { quiet?: boolean } = {}
+): Promise<StatusResultDto> {
   const hit = siteOf(accountId)
   if (!hit) return { ok: false, error: '账号不存在' }
   const proxy = await currentProxy()
@@ -403,16 +451,20 @@ async function doStatus(accountId: string): Promise<StatusResultDto> {
     ...reloginPatch
   })
   await syncCheckinReceipt(hit.site, accountId, snapshot)
-  store.log(
-    snapshot.ok ? 'ok' : 'warn',
-    '额度刷新',
-    `${hit.site.name} / ${hit.account.label}：${
-      snapshot.ok
-        ? `可用 $${(snapshot.available ?? 0).toFixed(2)}，累计 $${(snapshot.used ?? 0).toFixed(2)}`
-        : snapshot.error
-    }`,
-    { siteId: hit.site.id, accountId }
-  )
+  // quiet：启动时的批量补查不该把每个账号都写成一条「额度刷新」，
+  // 那会把运行日志刷满，掩盖真正有信息量的记录
+  if (!opts.quiet) {
+    store.log(
+      snapshot.ok ? 'ok' : 'warn',
+      '额度刷新',
+      `${hit.site.name} / ${hit.account.label}：${
+        snapshot.ok
+          ? `可用 $${(snapshot.available ?? 0).toFixed(2)}，累计 $${(snapshot.used ?? 0).toFixed(2)}`
+          : snapshot.error
+      }`,
+      { siteId: hit.site.id, accountId }
+    )
+  }
   return {
     ok: snapshot.ok,
     available: snapshot.available,
@@ -446,41 +498,54 @@ async function ensureSiteProbed(siteId: string, proxy: string): Promise<Site | u
   return store.findSite(siteId)
 }
 
-async function doCheckin(accountId: string): Promise<CheckinResultDto> {
+async function doCheckin(
+  accountId: string,
+  opts: { force?: boolean } = {}
+): Promise<CheckinResultDto> {
   const hit = siteOf(accountId)
   if (!hit) return { ok: false, already: false, message: '账号不存在' }
   const proxy = await currentProxy()
   const site = (await ensureSiteProbed(hit.site.id, proxy)) ?? hit.site
   const sDeps = sessionDeps(site.id, accountId, proxy)
 
-  // 本地回执已证明今天签过：直接跳过，不发任何请求。
-  // 批量签到与定时任务都会走这里，跳过已签账号才不会每次都白撞人机验证、
-  // 也不会对重登类站点做无意义的登出重登。
-  if (checkedInThisPeriod(hit.account.lastCheckin, Date.now())) {
+  // 手动点行内按钮是明确意图：已签也要真的执行一次（重登类站点靠登出再登领取，
+  // 拦住它等于按钮失效）。批量签到与定时任务则跳过已签，避免白撞人机验证。
+  const plan = planCheckin(site.mode, hit.account.lastCheckin, opts.force === true)
+  if (plan.skip) {
+    // 写一条日志再返回：批量跑完用户看到「成功 N / 总数」时，
+    // 必须能在运行日志里查到每个账号到底是签了还是被跳过，否则没法核对。
+    store.log('info', '签到', `${site.name} / ${hit.account.label}：今日已签到，已跳过`, {
+      siteId: site.id,
+      accountId
+    })
     return { ok: true, already: true, message: '今日已签到，已跳过' }
   }
 
   // RELOGIN 站点：签到 ≡ 登出后重登，且必须以余额增量确认到账。
   // 注意这里刻意不先做会话续期 —— 会话被保活就永远登不出去，也就领不到奖。
   if (site.mode === 'RELOGIN') {
-    // 先跟站点核对：今日已有发放记录就不再登出重登（白登一次也领不到第二笔）
-    const recon = await reconcileCheckin(site, hit.account, { proxy, session: sDeps })
-    if (recon.checked) {
-      const receipt: CheckinReceipt = {
-        at: Date.now(),
-        date: rewardDate(Date.now()),
-        ok: true,
-        already: true,
-        reward: recon.reward,
-        rewardSource: 'site',
-        message: `今日已签到（${recon.source ?? '站点记录'}）`
+    // 先跟站点核对：今日已有发放记录就不再登出重登（白登一次也领不到第二笔）。
+    // 手动触发时不做这一步 —— 用户就是想重登，核对命中会让按钮点不动。
+    if (plan.verify) {
+      const recon = await reconcileCheckin(site, hit.account, { proxy, session: sDeps })
+      if (recon.checked) {
+        const receipt: CheckinReceipt = {
+          at: Date.now(),
+          date: rewardDate(Date.now()),
+          ok: true,
+          already: true,
+          reward: recon.reward,
+          rewardSource: 'site',
+          rewardCheckedAt: Date.now(),
+          message: `今日已签到（${recon.source ?? '站点记录'}）`
+        }
+        await patchAccount(accountId, { lastCheckin: receipt })
+        store.log('ok', '签到', `${site.name} / ${hit.account.label}：${receipt.message}`, {
+          siteId: site.id,
+          accountId
+        })
+        return { ok: true, already: true, reward: recon.reward, message: receipt.message }
       }
-      await patchAccount(accountId, { lastCheckin: receipt })
-      store.log('ok', '签到', `${site.name} / ${hit.account.label}：${receipt.message}`, {
-        siteId: site.id,
-        accountId
-      })
-      return { ok: true, already: true, reward: recon.reward, message: receipt.message }
     }
     const current = store.findAccount(accountId) ?? hit.account
     const credential = current.credentialId ? store.findCredential(current.credentialId) : undefined
@@ -542,6 +607,8 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
           already: false,
           reward: detail.checked ? detail.reward : undefined,
           rewardSource: 'site',
+          // 记下这次核对时间：站点确实读不到金额时，避免下次刷新立刻再问一遍
+          rewardCheckedAt: Date.now(),
           message: result.message
         }
       })
@@ -559,6 +626,32 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
           error: result.message
         }
       })
+    } else {
+      // 重登成功但没检测到新的到账：多数是今天已经领过。
+      // 这不是失败，去向站点记录确认一次 —— 确认到就按「今日已领」如实返回，
+      // 而不是把一次成功的重登报成红色的错误。
+      const recon = await reconcileCheckin(site, store.findAccount(accountId) ?? hit.account, {
+        proxy,
+        session: sDeps
+      })
+      if (recon.checked) {
+        const receipt: CheckinReceipt = {
+          at: Date.now(),
+          date: rewardDate(Date.now()),
+          ok: true,
+          already: true,
+          reward: recon.reward,
+          rewardSource: 'site',
+          rewardCheckedAt: Date.now(),
+          message: '已重登，今日额度此前已发放'
+        }
+        await patchAccount(accountId, { lastCheckin: receipt })
+        store.log('ok', '签到', `${site.name} / ${hit.account.label}：${receipt.message}`, {
+          siteId: site.id,
+          accountId
+        })
+        return { ok: true, already: true, reward: recon.reward, message: receipt.message }
+      }
     }
     store.log(result.ok ? 'ok' : 'warn', '签到', `${site.name} / ${hit.account.label}：${result.message}`, {
       siteId: site.id,
@@ -572,11 +665,17 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
     }
   }
 
-  let result = await checkin(site, hit.account, {
-    proxy,
-    turnstileSiteKey: site.turnstileSiteKey,
-    session: sDeps
-  })
+  const runOpts = { ignoreLocalReceipt: opts.force === true }
+  let result = await checkin(
+    site,
+    hit.account,
+    {
+      proxy,
+      turnstileSiteKey: site.turnstileSiteKey,
+      session: sDeps
+    },
+    runOpts
+  )
   // 会话过期时自动重建再签一次，而不是让用户手动重新登录
   if (!result.ok && isSessionExpired(result.message)) {
     const rebuilt = await tryRebuildSession(
@@ -585,11 +684,16 @@ async function doCheckin(accountId: string): Promise<CheckinResultDto> {
       proxy
     )
     if (rebuilt.ok) {
-      result = await checkin(site, store.findAccount(accountId) ?? hit.account, {
-        proxy,
-        turnstileSiteKey: site.turnstileSiteKey,
-        session: sDeps
-      })
+      result = await checkin(
+        site,
+        store.findAccount(accountId) ?? hit.account,
+        {
+          proxy,
+          turnstileSiteKey: site.turnstileSiteKey,
+          session: sDeps
+        },
+        runOpts
+      )
     }
   }
   if (result.receipt) {
@@ -1062,7 +1166,11 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC.accountStatus, (_e, accountId: string) => doStatus(accountId))
-  ipcMain.handle(IPC.accountCheckin, (_e, accountId: string) => doCheckin(accountId))
+  // 行内「签到 / 重登领取」是手动操作：force=true 表示即使今天已签也真的执行一次。
+  // 批量与定时任务走 runCheckinAll / scheduleNext，不带 force，已签直接跳过。
+  ipcMain.handle(IPC.accountCheckin, (_e, accountId: string, force?: boolean) =>
+    doCheckin(accountId, { force: force === true })
+  )
 
   /**
    * 读取账号的 API Key 列表（只读）。
@@ -1360,6 +1468,36 @@ async function backfillProviderSessions(): Promise<void> {
 }
 
 /**
+ * 启动时给「金额不可信」的今日回执补查一次站点记录。
+ *
+ * 旧版本把重登前后的余额差写进回执，v0.7.1 起这类金额不再展示，
+ * 于是升级后这些账号只剩「已签」没有金额。等用户自己点刷新太被动，
+ * 这里在启动后主动补查：查到就把真实奖励写回去，金额立刻恢复显示。
+ * 查不到时也会记下时间，6 小时内不再重复请求。
+ */
+async function backfillCheckinRewards(): Promise<void> {
+  const pending = store
+    .getInternal()
+    .sites.flatMap((site) =>
+      site.accounts.filter((a) => needsRewardEnrichment(a.lastCheckin, Date.now()))
+    )
+  if (pending.length === 0) return
+  let filled = 0
+  for (const account of pending) {
+    try {
+      await doStatus(account.id, { quiet: true })
+      const after = store.findAccount(account.id)?.lastCheckin
+      if (after?.rewardSource === 'site' && after.reward !== undefined) filled++
+    } catch {
+      // 单个账号失败不影响其余；下次启动或手动刷新会再试
+    }
+  }
+  if (filled > 0) {
+    store.log('info', '签到核对', `已从站点记录补全 ${filled} 个账号的签到金额`)
+  }
+}
+
+/**
  * 给还没有配额单位的站点补探测一次。
  *
  * 旧版本不采集 quota_per_unit，金额一律按 500000 换算。站点若自定义了单位，
@@ -1524,6 +1662,10 @@ app.whenReady().then(async () => {
   void backfillQuotaUnits()
   // 老账号还没有第三方登录态备份，补一份，之后会话过期可自动恢复
   void backfillProviderSessions()
+  // 升级后旧回执里的「余额增量」不再展示，启动时主动向站点补查真实金额。
+  // 延迟 8 秒再跑：它要对每个账号发请求，跟窗口加载、首轮额度刷新错开，
+  // 否则账号多时会明显拖慢启动。
+  setTimeout(() => void backfillCheckinRewards(), 8000).unref()
   // macOS 的 Dock 图标不受 BrowserWindow.icon 影响，必须单独设置；
   // 否则开发模式与未正确打包时会显示 Electron 默认图标。
   applyDockIcon()

@@ -157,7 +157,14 @@ export interface ZcodeApi {
     /** 站点内账号排序：按给定 id 顺序重排该站点的账号。 */
     reorder(siteId: string, accountIds: string[]): Promise<AppConfig>
     status(accountId: string): Promise<StatusResultDto>
-    checkin(accountId: string): Promise<CheckinResultDto>
+    /**
+     * 执行签到。
+     *
+     * @param force 手动点击时为 true：即使本地回执显示今天已签也真的执行一次。
+     *              重登类站点本来就靠「登出再登」领取，用已签拦它等于按钮失效。
+     *              批量与定时任务传 false，已签直接跳过。
+     */
+    checkin(accountId: string, force?: boolean): Promise<CheckinResultDto>
     /** 读取该账号在站点上的 API Key 列表（只读）。 */
     keys(accountId: string): Promise<ApiKeyListDto>
   }

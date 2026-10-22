@@ -170,3 +170,42 @@ export function checkedInThisPeriod(
   if (receipt.date !== rewardDate(now)) return false
   return receipt.at >= rewardEpochMs(now) && receipt.at <= now
 }
+
+/** 奖励金额补查的冷却时间：同一条回执最多每 6 小时向站点问一次。 */
+export const REWARD_RECHECK_MS = 6 * 3_600_000
+
+/**
+ * 这条今日回执的奖励金额是否需要向站点补查。
+ *
+ * 重登类站点的历史回执里存的是**余额增量**（不是奖励金额，界面上不展示），
+ * 升级后这些行就只剩「已签」没有金额。补查一次换成站点记录里的真实金额，
+ * 金额才能重新显示出来；站点确实读不到时才保持空白，绝不拿增量凑数。
+ *
+ * 三种情况不补查：
+ *   - 不是本周期内的回执（没签就没金额可言）
+ *   - 已经有可信的站点金额
+ *   - 6 小时内刚查过一次且没查到（避免每次刷新都白打请求）
+ */
+export function needsRewardEnrichment(
+  receipt:
+    | {
+        at: number
+        date: string
+        ok: boolean
+        reward?: number
+        rewardSource?: 'site' | 'delta'
+        rewardCheckedAt?: number
+      }
+    | undefined,
+  now: number
+): boolean {
+  if (!receipt || !checkedInThisPeriod(receipt, now)) return false
+  if (receipt.rewardSource === 'site' && receipt.reward !== undefined) return false
+  if (
+    receipt.rewardCheckedAt !== undefined &&
+    now - receipt.rewardCheckedAt < REWARD_RECHECK_MS
+  ) {
+    return false
+  }
+  return true
+}

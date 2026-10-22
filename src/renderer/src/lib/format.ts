@@ -159,6 +159,7 @@ export function checkinText(
         already: boolean
         reward?: number
         rewardSource?: 'site' | 'delta'
+        rewardCheckedAt?: number
       }
     | undefined,
   now = Date.now()
@@ -167,10 +168,17 @@ export function checkinText(
   const time = beijingTime(receipt.at)
   const reward = showableReward(receipt)
   if (isCheckedToday(receipt, now)) {
+    // 已签但没金额：说明一下是「站点没回金额」，而不是数据丢了。
+    // 明细放在悬停提示里 —— 账号行已经够挤，不该再塞一段解释。
+    const missing =
+      reward === undefined
+        ? '站点未回传本次签到金额，可点「刷新额度」向站点重新核对'
+        : undefined
     return {
       label: receipt.already ? '今日已签' : '已签',
       reward,
-      stale: false
+      stale: false,
+      ...(missing ? { hint: missing } : {})
     }
   }
   // 跨天：今日尚未签到，但把上次记录留在悬停提示里

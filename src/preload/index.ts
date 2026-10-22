@@ -27,7 +27,8 @@ const api: ZcodeApi = {
       ipcRenderer.invoke(IPC.accountReorder, siteId, accountIds),
     status: (accountId: string) => ipcRenderer.invoke(IPC.accountStatus, accountId),
     keys: (accountId: string) => ipcRenderer.invoke(IPC.accountKeys, accountId),
-    checkin: (accountId: string) => ipcRenderer.invoke(IPC.accountCheckin, accountId)
+    checkin: (accountId: string, force?: boolean) =>
+      ipcRenderer.invoke(IPC.accountCheckin, accountId, force)
   },
   credential: {
     list: () => ipcRenderer.invoke(IPC.credentialList),

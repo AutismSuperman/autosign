@@ -261,12 +261,19 @@ export function App(): React.JSX.Element {
     [refresh, showToast, beginBusy, endBusy]
   )
 
+  /**
+   * 手动签到：行内「签到 / 重登领取」点一次就真的执行一次。
+   *
+   * 传 force=true 是刻意的：重登类站点（AgentRouter 等）本来就靠「登出再重登」
+   * 领取，如果因为「本地回执说今天已签」就把请求拦下来，按钮等于失效。
+   * 「今天已签就跳过」只用于批量与定时任务（见 checkinAll 的循环）。
+   */
   const checkin = useCallback(
     async (accountId: string) => {
       const key = `checkin:${accountId}`
       beginBusy(key)
       try {
-        const r = await window.api.account.checkin(accountId)
+        const r = await window.api.account.checkin(accountId, true)
         await refresh()
         showToast(r.message, r.ok ? 'success' : 'error')
       } finally {

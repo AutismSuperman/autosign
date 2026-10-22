@@ -126,6 +126,13 @@ export interface CheckinReceipt {
    * 历史回执没有这个字段，读取时按 `already` 兜底（见 store.normalizeReceipt）。
    */
   rewardSource?: 'site' | 'delta'
+  /**
+   * 最近一次向站点补查奖励金额的时间。
+   *
+   * 旧回执里的金额是余额差，不可展示；补查到站点记录后会被换成真实金额。
+   * 补不到时记下这次时间，避免每次刷新都重复请求（冷却见 profile.needsRewardEnrichment）。
+   */
+  rewardCheckedAt?: number
   message: string
 }
 
@@ -167,6 +174,12 @@ export interface QuotaSnapshot {  at: number
   siteReward?: number
   /** 站点核对命中来源，写日志与回执用。 */
   checkinSource?: string
+  /**
+   * 本次读取是否向站点核对过今日签到记录（含「补查奖励金额」）。
+   *
+   * 回执里的金额若来自余额差（不可展示），靠这次核对换成站点记录里的真实金额。
+   */
+  rewardChecked?: boolean
   /** 失败原因，成功时为空。 */
   error?: string
 }

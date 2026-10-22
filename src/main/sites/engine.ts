@@ -16,6 +16,7 @@ import {
   checkedInThisPeriod,
   isAnyRouter,
   kindOf,
+  needsRewardEnrichment,
   rewardDate,
   rewardEpochMs,
   selfPaths,
@@ -212,11 +213,16 @@ export async function readStatus(
     const usedUsd = kind === 'NEWAPI' ? quotaToUsdExact(usedRaw, unit) : usedRaw
 
     const checkedLocal = checkedInThisPeriod(account.lastCheckin, now)
+    // 本地回执照样要核对一次的情况：金额不可信（历史余额增量），
+    // 或干脆还没有金额。补查后界面才能显示站点记录里的真实奖励，
+    // 而不是一片空白 —— 只是不再拿余额差凑数。
+    const enrich = needsRewardEnrichment(account.lastCheckin, now)
+    const rewardChecked = !checkedLocal || enrich
     let checkedToday = checkedLocal
     let siteChecked: boolean | undefined
     let siteReward: number | undefined
     let checkinSource: string | undefined
-    if (!checkedLocal) {
+    if (rewardChecked) {
       // 本地无回执不等于没签：向站点核对今日签到记录（登录即发放型站点的最终判据）
       const recon = await reconcileCheckin(site, account, deps)
       if (recon.checked) {
@@ -236,6 +242,7 @@ export async function readStatus(
       siteChecked,
       siteReward,
       checkinSource,
+      rewardChecked,
       error: undefined
     }
   }
@@ -504,6 +511,48 @@ export interface CheckinResult {
   receipt?: CheckinReceipt
 }
 
+/** 签到前的处理计划：先跳过、还是先跟站点核对。 */
+export interface CheckinPlan {
+  /** 直接按「今日已签」跳过，不发任何请求。 */
+  skip: boolean
+  /** 先与站点核对今日记录（登录即发放型站点的最终判据）。 */
+  verify: boolean
+}
+
+/**
+ * 决定这次签到怎么走（纯函数，便于测试）。
+ *
+ * 关键区别是**谁发起的**：
+ *   - 批量签到 / 定时任务 / 托盘：用户没有逐个确认，今天签过的就跳过，
+ *     避免重复撞人机验证、避免对重登类站点做无意义的登出重登；
+ *   - 手动点行内「签到 / 重登领取」：这是明确的一次操作意图。
+ *     即使用户今天已经签过，也必须真的执行 —— 重登类站点本来就靠「登出再登」
+ *     领取，拦住它等于按钮失效。此时连「先核对」也省掉：
+ *     核对到今日记录就返回「已签到」会让按钮同样点不动。
+ */
+export function planCheckin(
+  mode: CheckinMode,
+  receipt: Account['lastCheckin'],
+  force = false,
+  now = Date.now()
+): CheckinPlan {
+  if (force) {
+    // 手动触发：重登类站点直接走重登；其余站点仍先跟站点核对（省一次人机验证）
+    return { skip: false, verify: mode !== 'RELOGIN' }
+  }
+  const signed = checkedInThisPeriod(receipt, now)
+  return { skip: signed, verify: !signed }
+}
+
+/** 单次签到执行的选项。 */
+export interface CheckinRunOptions {
+  /**
+   * 手动触发：本地回执说今天已签也不跳过，直接进入核对 / 签到流程。
+   * 自动批量任务不得使用。
+   */
+  ignoreLocalReceipt?: boolean
+}
+
 /**
  * 执行签到。
  *
@@ -516,12 +565,13 @@ export interface CheckinResult {
 export async function checkin(
   site: Site,
   account: Account,
-  deps: EngineDeps
+  deps: EngineDeps,
+  opts: CheckinRunOptions = {}
 ): Promise<CheckinResult> {
   const mode: CheckinMode = site.mode
   const now = Date.now()
 
-  if (checkedInThisPeriod(account.lastCheckin, now)) {
+  if (!opts.ignoreLocalReceipt && checkedInThisPeriod(account.lastCheckin, now)) {
     return { ok: true, already: true, message: '今日已签到' }
   }
 
