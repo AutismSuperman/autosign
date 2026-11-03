@@ -27,6 +27,13 @@ export function App(): React.JSX.Element {
   const [view, setView] = useState<ViewKey>('sites')
   /** 当前选中的站点；null 表示「全部站点」。批量操作只作用于选中的站点。 */
   const [activeSiteId, setActiveSiteId] = useState<string | null>(null)
+  /**
+   * 主视图是否把「已收起」的站点也画出来。
+   *
+   * 纯查看状态，不落盘：收起本身就是「不想看见」，默认必须不显示；
+   * 这个开关只是临时把它们并进来方便恢复，重启后回到默认。
+   */
+  const [showCollapsed, setShowCollapsed] = useState(false)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [addOpen, setAddOpen] = useState(false)
   const [loginSite, setLoginSite] = useState<Site | null>(null)
@@ -446,13 +453,7 @@ export function App(): React.JSX.Element {
     [config]
   )
 
-  /**
-   * 侧栏列表：只列未收起的站点。
-   *
-   * 「收起」只影响侧栏，**不影响主视图** —— 这是关键区别。主视图是工作区，
-   * 用户在那里看额度、点签到；侧栏是快捷入口。把两者绑在一起会出现
-   * 「收起了就再也找不到」的死角，旧版正是这样。
-   */
+  /** 侧栏列表：只列未收起的站点。 */
   const sidebarSites = useMemo(() => {
     const filtered = (config?.sites ?? []).filter((s) => !hiddenSites.has(s.id))
     return sortSites(
@@ -462,14 +463,23 @@ export function App(): React.JSX.Element {
     )
   }, [config, hiddenSites])
 
-  /** 主视图列表：始终包含全部站点，收起过的也在（带「已收起」标记可原地恢复）。 */
+  /**
+   * 主视图列表：默认也只显示未收起的站点。
+   *
+   * 「收起」的语义就是「我不想看见它」。如果主视图仍然把它画出来，收起就
+   * 毫无意义 —— 用户还得在一堆卡片里划过去。所以默认与侧栏保持一致。
+   *
+   * 想看它们时点顶栏的「已收起（N）」开关，主视图临时把它们并进来。
+   * 那是一个**查看开关**，不改任何配置，刷新或重启后回到默认的「不显示」。
+   */
   const visibleSites = useMemo(() => {
+    const filtered = showCollapsed ? scopeSites : scopeSites.filter((s) => !hiddenSites.has(s.id))
     return sortSites(
-      scopeSites,
+      filtered,
       config?.settings.siteSort ?? 'custom',
       config?.settings.siteSortDir ?? 'desc'
     )
-  }, [scopeSites, config])
+  }, [scopeSites, config, hiddenSites, showCollapsed])
 
   /**
    * 选中的站点被**移除**后，回到「全部站点」，避免主视图空白。
@@ -525,6 +535,9 @@ export function App(): React.JSX.Element {
           <SitesView
             sites={visibleSites}
             allSites={config.sites}
+            collapsedCount={hiddenSites.size}
+            showCollapsed={showCollapsed}
+            onToggleShowCollapsed={() => setShowCollapsed((v) => !v)}
             credentials={config.credentials.map((c) => ({
               id: c.id,
               provider: c.provider,

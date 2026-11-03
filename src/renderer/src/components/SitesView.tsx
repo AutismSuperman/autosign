@@ -55,6 +55,11 @@ import { useSiteIcon } from '../lib/useSiteIcon'
 interface Props {
   sites: Site[]
   allSites: Site[]
+  /** 有多少站点被收起到侧栏之外。为 0 时不显示「已收起」开关。 */
+  collapsedCount: number
+  /** 当前是否把已收起的站点也画出来。 */
+  showCollapsed: boolean
+  onToggleShowCollapsed: () => void
   /** 凭据列表：用于在账号行标注这次登录用的是哪个账号。 */
   credentials: PublicCredential[]
   /** 正在进行的任务键集合；同一时刻可能有多个账号各自在处理。 */
@@ -393,6 +398,27 @@ export function SitesView(props: Props): React.JSX.Element {
           aria-label="检索站点或账号"
         />
       </div>
+      {/*
+        已收起站点的查看开关。
+        收起=不想看见，所以默认不显示它们；这里给一个明确的入口临时并进来，
+        用于恢复或查看。只在确实有收起站点时出现，平时不占位置。
+        放在检索框旁边而不是最右侧，因为它属于「看哪些」而不是「做什么」。
+      */}
+      {props.collapsedCount > 0 && (
+        <button
+          className={props.showCollapsed ? 'btn active' : 'btn'}
+          onClick={() => props.onToggleShowCollapsed()}
+          title={
+            props.showCollapsed
+              ? '不再显示已收起的站点'
+              : `显示 ${props.collapsedCount} 个已从侧栏收起的站点`
+          }
+          aria-pressed={props.showCollapsed}
+        >
+          {props.showCollapsed ? <EyeOff size={14} /> : <Eye size={14} />}
+          已收起 {props.collapsedCount}
+        </button>
+      )}
       {/* 打码开关：截图或给他人看界面时一键遮住账号身份 */}
       <button
         className={props.maskAccounts ? 'btn active' : 'btn'}
@@ -438,18 +464,32 @@ export function SitesView(props: Props): React.JSX.Element {
   )
 
   if (props.sites.length === 0) {
+    // 区分「一个站点都没有」和「全被收起了」：后者要直接给出恢复入口，
+    // 否则用户面对空页面会以为站点丢了。
+    const allCollapsed = props.collapsedCount > 0
     return (
       <>
         {topbar}
         <div className="content">
           <div className="empty">
             <Globe size={36} strokeWidth={1.4} className="empty-icon" />
-            <div className="empty-title">还没有可见的站点</div>
-            <div>从内置目录添加站点，或在「全部站点」里恢复已收起的站点。</div>
-            <button className="btn primary" onClick={props.onAddSite}>
-              <Plus size={14} />
-              添加站点
-            </button>
+            <div className="empty-title">{allCollapsed ? '站点都已收起' : '还没有可见的站点'}</div>
+            <div>
+              {allCollapsed
+                ? `有 ${props.collapsedCount} 个站点已从侧栏收起。点上面的「已收起」可以查看并恢复。`
+                : '从内置目录添加站点，或在侧栏悬停站点行、点眼睛图标即可把它收起。'}
+            </div>
+            {allCollapsed ? (
+              <button className="btn primary" onClick={props.onToggleShowCollapsed}>
+                <Eye size={14} />
+                显示已收起（{props.collapsedCount}）
+              </button>
+            ) : (
+              <button className="btn primary" onClick={props.onAddSite}>
+                <Plus size={14} />
+                添加站点
+              </button>
+            )}
           </div>
         </div>
         {dialog}

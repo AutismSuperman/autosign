@@ -182,11 +182,49 @@ const initial = await sidebarNames()
 ck('侧栏列出未收起的站点', JSON.stringify(initial) === JSON.stringify(['AlphaSite', 'BetaSite']), JSON.stringify(initial))
 ck('已收起的站点不在侧栏', !initial.includes('GammaSite'))
 
+/* 收起=不想看见，所以主视图默认也**不画**它。
+ * 这是 v0.8.1 的关键修正：v0.8.0 让收起站点继续显示在主视图里，
+ * 结果「收起」形同虚设 —— 用户还得在一堆卡片里划过去。 */
 const initialMain = await mainNames()
 ck(
-  '「全部站点」视图包含已收起的站点（藏了也能找回）',
-  JSON.stringify(initialMain) === JSON.stringify(['AlphaSite', 'BetaSite', 'GammaSite']),
+  '主视图默认不显示已收起的站点',
+  JSON.stringify(initialMain) === JSON.stringify(['AlphaSite', 'BetaSite']),
   JSON.stringify(initialMain)
+)
+
+// ---- 「已收起」查看开关 ----
+ck(
+  '顶栏有「已收起 N」开关（提供找回入口，不是死胡同）',
+  (await ev(`[...document.querySelectorAll('.btn')].some(b=>(b.textContent||'').includes('已收起'))`)) === true
+)
+ck(
+  '开关上的数量与实际收起数一致',
+  (await ev(`(() => {
+    const b = [...document.querySelectorAll('.btn')].find(x => (x.textContent||'').includes('已收起'))
+    return b ? (b.textContent.match(/(\\d+)/)||[])[1] === '1' : false
+  })()`)) === true,
+  await ev(`[...document.querySelectorAll('.btn')].find(x=>(x.textContent||'').includes('已收起'))?.textContent`)
+)
+
+// 点开后主视图才显示收起站点
+await ev(`[...document.querySelectorAll('.btn')].find(b=>(b.textContent||'').includes('已收起'))?.click()`)
+await sleep(700)
+const shownMain = await mainNames()
+ck(
+  '点「已收起」后主视图并入收起站点',
+  JSON.stringify(shownMain) === JSON.stringify(['AlphaSite', 'BetaSite', 'GammaSite']),
+  JSON.stringify(shownMain)
+)
+await shot('01b-show-collapsed')
+
+// 再点一次收起（回到默认不显示）
+await ev(`[...document.querySelectorAll('.btn')].find(b=>(b.textContent||'').includes('已收起'))?.click()`)
+await sleep(700)
+const hiddenAgain = await mainNames()
+ck(
+  '再点一次恢复「不显示」',
+  JSON.stringify(hiddenAgain) === JSON.stringify(['AlphaSite', 'BetaSite']),
+  JSON.stringify(hiddenAgain)
 )
 
 // ---- 开关存在性 ----
@@ -211,8 +249,11 @@ ck(
   '主视图卡片不再显示「已隐藏」警告标签',
   (await ev(`[...document.querySelectorAll('.site-tags .tag')].some(t=>t.textContent.includes('已隐藏'))`)) === false
 )
+// 以下两项要在「已收起」打开时才有对应卡片可查
+await ev(`[...document.querySelectorAll('.btn')].find(b=>(b.textContent||'').includes('已收起'))?.click()`)
+await sleep(700)
 ck(
-  '收起态不灰化卡片（收起≠不可用）',
+  '收起态不灰化卡片（收起≠不可用，它能正常签到）',
   (await ev(`getComputedStyle(document.querySelector('.site-card.is-sidebar-collapsed')).opacity`)) === '1',
   await ev(`getComputedStyle(document.querySelector('.site-card.is-sidebar-collapsed')).opacity`)
 )
@@ -231,6 +272,8 @@ ck(
     return !!btn && btn.classList.contains('muted')
   })()`)) === true
 )
+await ev(`[...document.querySelectorAll('.btn')].find(b=>(b.textContent||'').includes('已收起'))?.click()`)
+await sleep(700)
 ck(
   '「全部站点」计数与侧栏条目数一致（不再出现 3 vs 2）',
   (await ev(`(() => {
@@ -259,15 +302,27 @@ ck(
 )
 const afterHideMain = await mainNames()
 ck(
-  '收起后主视图仍能看到它（未丢数据）',
-  afterHideMain.includes('AlphaSite'),
+  '收起后主视图也把它移除（收起=不想看见，不能只收侧栏）',
+  !afterHideMain.includes('AlphaSite') && JSON.stringify(afterHideMain) === JSON.stringify(['BetaSite']),
   JSON.stringify(afterHideMain)
 )
 ck('收起后侧栏条目数等于剩余站点数', afterHide.length === 1)
+ck(
+  '收起后「已收起」计数 +1',
+  (await ev(`[...document.querySelectorAll('.btn')].find(x=>(x.textContent||'').includes('已收起'))?.textContent`)).includes('2'),
+  await ev(`[...document.querySelectorAll('.btn')].find(x=>(x.textContent||'').includes('已收起'))?.textContent`)
+)
 await shot('02-after-hide')
 
-// ---- 在「全部站点」里恢复 ----
-// 主视图对应卡片的眼睛按钮是同一开关
+// ---- 通过「已收起」开关找回并原地恢复 ----
+await ev(`[...document.querySelectorAll('.btn')].find(b=>(b.textContent||'').includes('已收起'))?.click()`)
+await sleep(700)
+ck(
+  '打开「已收起」后能看到被收起的站点',
+  (await mainNames()).includes('AlphaSite'),
+  JSON.stringify(await mainNames())
+)
+
 const restored = await ev(`(() => {
   const card = [...document.querySelectorAll('.site-card')].find(c =>
     c.querySelector('.site-name')?.textContent === 'AlphaSite')
@@ -278,7 +333,7 @@ const restored = await ev(`(() => {
   btn.click()
   return 'clicked'
 })()`)
-ck('主视图卡片上能找到恢复按钮', restored === 'clicked', String(restored))
+ck('卡片上能找到「重新显示」按钮', restored === 'clicked', String(restored))
 await sleep(900)
 const afterRestore = await sidebarNames()
 ck(
@@ -288,21 +343,51 @@ ck(
 )
 await shot('03-after-restore')
 
-// ---- 收起最后一个站点时的空态引导 ----
+// ---- 收起最后一个站点：空态要给恢复入口 ----
 await ev(`(() => {
   const rows = [...document.querySelectorAll('.nav-site-row .nav-hide-toggle')]
   rows.forEach(b => b.click())
 })()`)
-await sleep(1000)
+await sleep(1200)
 const emptySidebar = await sidebarNames()
 ck('可以收起全部站点', emptySidebar.length === 0, JSON.stringify(emptySidebar))
-const hint = await ev(`document.querySelector('.sidebar-hint')?.textContent || ''`)
+
+/* 前面为了验证恢复按钮打开过「已收起」，此时它仍处于打开状态，
+ * 主视图会照常画出已收起站点 —— 那正是这个开关的用途。
+ * 先关掉它，才是「默认视角 + 全部收起」的真实空态。 */
+const toggleOn = await ev(
+  `[...document.querySelectorAll('.btn.active')].some(b=>(b.textContent||'').includes('已收起'))`
+)
+if (toggleOn) {
+  await ev(`[...document.querySelectorAll('.btn')].find(b=>(b.textContent||'').includes('已收起'))?.click()`)
+  await sleep(800)
+}
+ck('「已收起」是临时查看开关，可以关掉', (await mainNames()).length === 0, JSON.stringify(await mainNames()))
+
+const emptyTitle = await ev(`document.querySelector('.empty-title')?.textContent || ''`)
 ck(
-  '全部收起时给出如何找回的引导（不是死胡同）',
-  hint.includes('全部站点'),
-  hint.replace(/\s+/g, ' ').trim()
+  '全部收起时主视图给出「站点都已收起」而不是「还没有站点」',
+  emptyTitle.includes('收起'),
+  emptyTitle
+)
+const emptyAction = await ev(`
+  [...document.querySelectorAll('.empty .btn')].map(b=>b.textContent).join('|')
+`)
+ck(
+  '空态直接给出「显示已收起」入口（不是死胡同）',
+  emptyAction.includes('已收起'),
+  emptyAction
 )
 await shot('04-all-collapsed')
+
+// 从空态恢复一个，验证链路完整
+await ev(`[...document.querySelectorAll('.empty .btn')].find(b=>(b.textContent||'').includes('已收起'))?.click()`)
+await sleep(1000)
+ck(
+  '空态点「显示已收起」后能看到卡片',
+  (await mainNames()).length > 0,
+  JSON.stringify(await mainNames())
+)
 
 // ---- 汇总 ----
 await ev(`document.querySelector('.nav-item')?.click()`)
