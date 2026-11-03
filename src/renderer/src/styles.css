@@ -676,6 +676,58 @@ html[data-platform='darwin'] .sidebar.collapsed {
   white-space: nowrap;
 }
 
+/**
+ * 站点行 + 悬停可见性开关。
+ *
+ * 开关绝对定位叠在行的右端，不参与 flex 布局 —— 否则它一出现就会挤压
+ * 站名和账号数，鼠标扫过时整行文字跳动。平时 opacity:0 但仍占位，
+ * 因此行内布局恒定，只有透明度变化。
+ */
+.nav-site-row {
+  position: relative;
+}
+
+.nav-hide-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  /* 开关出现时盖住账号数，避免两者叠字 */
+  background: var(--bg-sidebar);
+}
+
+.nav-site-row:hover .nav-hide-toggle,
+.nav-hide-toggle:focus-visible {
+  opacity: 1;
+}
+
+.nav-hide-toggle:hover {
+  color: var(--text);
+  background: var(--bg-subtle);
+}
+
+/* 悬停时把账号数藏起来，给开关腾位置 */
+.nav-site-row:hover .nav-count {
+  opacity: 0;
+}
+
+.nav-count {
+  transition: opacity 0.12s ease;
+}
+
+/* 折叠成图标条时没有空间放开关，也不该能点 */
+.sidebar.collapsed .nav-hide-toggle {
+  display: none;
+}
+
 .nav-count {
   font-size: var(--font-badge);
   color: var(--text-faint);
@@ -777,8 +829,19 @@ html[data-platform='darwin'] .sidebar.collapsed {
   box-shadow: var(--shadow-md);
 }
 
-.site-card.is-hidden {
-  opacity: 0.62;
+/**
+ * 从侧栏收起的站点卡片：只加一道左侧竖线做**位置提示**，不做灰化。
+ *
+ * 灰化意味着「这个不能用了」，但收起只影响侧栏入口 —— 卡片里的账号照样
+ * 能刷新、能签到、会被定时任务处理。用灰化会让人误以为它被停用了。
+ */
+.site-card.is-sidebar-collapsed {
+  box-shadow: inset 2px 0 0 var(--border-strong);
+}
+
+/* 收起态的眼睛按钮用弱化色，和「显示中」的常态区分开 */
+.icon-btn.muted {
+  color: var(--text-faint);
 }
 
 .site-card.flash {

@@ -21,14 +21,28 @@ import type { SessionDeps } from './session'
 const KEEPALIVE_INTERVAL_MS = 5 * 60_000
 
 /**
- * 会话自动恢复的扫描间隔：30 分钟。
+ * 会话自动恢复的常规扫描间隔：10 分钟。
  *
  * 被动恢复（刷新额度、签到时顺带重建）只在用户或定时任务触发时发生。
  * 如果那次重建恰好撞上网络抖动、站点限流或 WAF 拦截，账号就会一直挂着
  * 「需要重新授权」，直到用户自己想起来点一下 —— 这正是「每天都要手动点」的由来。
- * 后台每隔半小时再试一次，多数瞬时故障都能自愈。
+ * 后台定期再试，多数瞬时故障都能自愈。RELOGIN 站点（AgentRouter / AnyRouter）
+ * 的当日额度就靠登录动作发放，恢复得越及时，越不容易错过当天的发放窗口。
  */
-const RECOVER_INTERVAL_MS = 30 * 60_000
+const RECOVER_INTERVAL_MS = 10 * 60_000
+
+/**
+ * 会话自动恢复的扫描间隔（上一次全部失败时）：2 分钟。
+ *
+ * 静默重授权要开隐藏窗口走第三方 OAuth，连续失败多半是瞬时故障（WAF 拦截、
+ * 代理抖动、GitHub 侧风控）。立即放弃后要等整个间隔才再试，把明明几秒后
+ * 就能自愈的账号晾了十分钟；反过来若一直失败，高频重试也只是白开窗口。
+ * 因此失败时切到短间隔快速重试，一旦有账号恢复就回到常规节奏。
+ */
+const RECOVER_FAST_MS = 2 * 60_000
+
+/** 连续无进展的恢复轮数上限：超过则退回常规间隔，避免无限快节奏重试。 */
+const RECOVER_FAST_ROUNDS = 3
 
 export interface KeepAliveDeps {
   proxy: () => Promise<string>
@@ -101,6 +115,10 @@ export async function recoverOnce(
 /** 启动保活定时器。返回停止函数。 */
 export function startKeepAlive(deps: KeepAliveDeps): () => void {
   let stopped = false
+  /** 快节奏连续重试的轮数：达到上限后退回常规间隔。 */
+  let fastRounds = 0
+  /** 当前生效的恢复间隔；用 setTimeout 链而不是 setInterval，间隔可动态调整。 */
+  let recoverTimer: NodeJS.Timeout | null = null
 
   const tick = async (): Promise<void> => {
     if (stopped) return
@@ -118,10 +136,20 @@ export function startKeepAlive(deps: KeepAliveDeps): () => void {
       const r = await recoverOnce(deps)
       if (r.recovered > 0) {
         deps.log(`会话恢复：${r.recovered} / ${r.total} 个账号已自动恢复，无需手动授权`)
+        fastRounds = 0
+      } else if (r.total > 0) {
+        // 有待恢复账号但一个都没成：短暂退避（60 秒）后再试，
+        // 避免立刻重打同一面墙；连续数轮无进展则退回常规间隔
+        fastRounds++
       }
     } catch {
       // 恢复失败是静默的：下次扫描会再试
     }
+    if (stopped) return
+    const nextMs =
+      fastRounds > 0 && fastRounds <= RECOVER_FAST_ROUNDS ? RECOVER_FAST_MS : RECOVER_INTERVAL_MS
+    recoverTimer = setTimeout(() => void recoverTick(), nextMs)
+    recoverTimer.unref?.()
   }
 
   // 启动后先跑一次，收掉已有快过期的令牌
@@ -130,12 +158,12 @@ export function startKeepAlive(deps: KeepAliveDeps): () => void {
   timer.unref?.()
 
   // 会话恢复单独一条较慢的节奏：它要真的重建会话，开销比续期大
-  const recoverTimer = setInterval(() => void recoverTick(), RECOVER_INTERVAL_MS)
+  recoverTimer = setTimeout(() => void recoverTick(), RECOVER_INTERVAL_MS)
   recoverTimer.unref?.()
 
   return () => {
     stopped = true
     clearInterval(timer)
-    clearInterval(recoverTimer)
+    if (recoverTimer) clearTimeout(recoverTimer)
   }
 }

@@ -758,6 +758,8 @@ export async function checkin(
           }
         }
       }
+      // 失败原因带进 message：隐藏窗口里拿不到 token 的具体状态（wait-timeout /
+      // turn-limit / 页面加载失败）只有这里知道，不透出来排障就只能靠猜
       return { ok: false, already: false, message: tokenRes.error ?? '人机验证失败' }
     }
 

@@ -100,6 +100,35 @@ let quitting = false
 /** 「已最小化到托盘」的提示每次运行只弹一次。 */
 let trayHintShown = false
 
+/**
+ * 主进程兜底。
+ *
+ * 隐藏窗口（取令牌 / 静默授权）内部有大量「不等结果就继续」的异步链路：
+ * 导航事件、`void` 掉的 loadURL、注入脚本的回调。其中任何一环抛错，
+ * 在 Electron 里都会变成 unhandledRejection —— 进程不会崩，但错误被静默吞掉，
+ * 表现是「什么都没发生，窗口一直停着」，比崩溃更难查。
+ *
+ * 这里统一记进运行日志。**只记消息与栈的头部**：
+ * 异步错误里常常夹着 URL，而 URL 可能带 code / state 等一次性凭据，
+ * 不能原样落盘（日志会经 IPC 下发到渲染进程）。
+ */
+function installProcessGuards(): void {
+  const describe = (e: unknown): string => {
+    const raw = e instanceof Error ? e.stack ?? e.message : String(e)
+    // 只取前两行（消息 + 首个栈帧），并抹掉形如 ?code=...&state=... 的查询串
+    const head = raw.split('\n').slice(0, 2).join(' | ')
+    return head.replace(/([?&](?:code|state|access_token|token)=)[^&\s]+/gi, '$1<redacted>')
+  }
+
+  process.on('unhandledRejection', (reason) => {
+    store.log('warn', '主进程', `未处理的异步异常：${describe(reason)}`)
+  })
+  process.on('uncaughtException', (err) => {
+    store.log('err', '主进程', `未捕获的异常：${describe(err)}`)
+  })
+}
+
+
 /** 界面主题同步到原生层：滚动条、菜单等原生控件跟随深浅色。 */
 function applyNativeTheme(): void {
   nativeTheme.themeSource = store.getSettings().theme ?? 'dark'
@@ -320,11 +349,16 @@ async function tryRebuildSession(
       })
     }
   })
-  if (!attempt.ok) return { ok: false, error: attempt.error }
-
-  // 静默授权会轮换 GitHub 的 user_session，备份必须跟着更新，
-  // 否则下次恢复回去的是一份已作废的登录态。
+  // 无论成败都刷新第三方登录态备份：静默授权成功会轮换 GitHub 的 user_session，
+  // 不刷新的话下次恢复回去的是一份已作废的登录态；失败也可能是站点侧原因
+  // （WAF 拦了 state 接口），此时分区里的登录态仍然有效，同样应该存下来。
+  // 采到空值（第三方登录态确实没了）时跳过，避免把已有备份抹掉。
   const providerCookies = await snapshotProviderSession(site, account.id)
+  if (!attempt.ok) {
+    if (providerCookies) await patchAccount(account.id, { providerCookies })
+    return { ok: false, error: attempt.error }
+  }
+
   await patchAccount(account.id, {
     cookie: attempt.cookie ?? account.cookie,
     token: attempt.token ?? account.token,
@@ -481,6 +515,21 @@ async function ensureSiteProbed(siteId: string, proxy: string): Promise<Site | u
   // 已探测过（有 sitekey 或明确知道站点未开启验证）就直接用；
   // 但配额单位可能是在旧版本里漏采的，缺它会让金额整体换算错，需要补探一次
   if ((site.turnstileSiteKey || site.turnstile === false) && site.quotaPerUnit) return site
+  // 站点后来才开启人机验证时，缓存的 turnstile=false 会让签到永远报
+  // 「站点未返回 sitekey」。探测一次刷新判定（probeSite 读的是站点实时状态）
+  if (site.turnstile === false) {
+    const refresh = await probeSite(site.baseUrl, proxy)
+    if (refresh.ok && (refresh.turnstile !== site.turnstile || refresh.turnstileSiteKey)) {
+      await store.mutate((config) => {
+        const target = config.sites.find((s) => s.id === siteId)
+        if (!target) return
+        target.turnstile = refresh.turnstile
+        target.turnstileSiteKey = refresh.turnstileSiteKey
+      })
+      return store.findSite(siteId)
+    }
+    return site
+  }
 
   const probe = await probeSite(site.baseUrl, proxy)
   if (!probe.ok) return site
@@ -1651,6 +1700,8 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   await store.load()
+  // 兜底必须尽早装：启动阶段的分区迁移、后台补查都在这里发起
+  installProcessGuards()
   applyNativeTheme()
   store.setChangeListener(broadcastConfigChanged)
   registerIpc()

@@ -1,5 +1,5 @@
 import {
-  Eye,
+  EyeOff,
   Globe,
   KeyRound,
   LayoutGrid,
@@ -14,7 +14,9 @@ import type { ViewKey } from '../App'
 import { useSiteIcon } from '../lib/useSiteIcon'
 
 interface Props {
+  /** 全部站点（含从侧栏隐藏的）：用于「全部站点」计数与折叠态回退。 */
   sites: Site[]
+  /** 侧栏里要列出的站点（已按可见性过滤并排序）。 */
   visibleSites: Site[]
   settings: { sidebarCollapsed: boolean }
   view: ViewKey
@@ -23,8 +25,8 @@ interface Props {
   activeSiteId: string | null
   onSelectSite: (siteId: string | null) => void
   onToggleCollapse: () => void
+  /** 切换站点是否在侧栏显示。数据与账号完全不受影响。 */
   onToggleSiteHidden: (siteId: string, hidden: boolean) => void
-  onShowAllHidden: () => void
   onAddSite: () => void
 }
 
@@ -51,14 +53,15 @@ function SiteIcon({ site }: { site: Site }): React.JSX.Element {
 /**
  * 左侧站点菜单。
  *
- * 两种隐藏方式并存：
- *   1. 整栏折叠为图标条（collapsed）
- *   2. 单个站点隐藏（hidden），可在「显示全部」里一次恢复
+ * 站点行本身就是「可见性开关」：鼠标悬停时右侧的眼睛图标可以把它从侧栏收起，
+ * 再点一次恢复。收起只是**侧栏不显示**，账号、额度、签到与定时任务完全不受影响，
+ * 所以它不叫「隐藏」，也没有单独的「显示全部」入口 —— 开关就在原处，不需要去别处找。
+ *
+ * 另外还有整栏折叠为图标条（collapsed），那是纯布局，与站点可见性无关。
  */
 export function Sidebar(props: Props): React.JSX.Element {
   const { settings, view, visibleSites, sites } = props
   const collapsed = settings.sidebarCollapsed
-  const hiddenCount = sites.filter((s) => s.hidden).length
 
   return (
     <aside className={collapsed ? 'sidebar collapsed' : 'sidebar'}>
@@ -83,37 +86,57 @@ export function Sidebar(props: Props): React.JSX.Element {
             <LayoutGrid size={16} />
           </span>
           <span className="nav-label">全部站点</span>
-          {sites.length > 0 && <span className="nav-count">{sites.length}</span>}
+          {/*
+            计数只算「侧栏可见的站点」，与下面列出的条目数一致。
+            显示全部站点数会与列表对不上（3 vs 2），让人以为漏了东西 ——
+            用户此刻关心的是「我能点进几个」，而不是数据库里存了几个。
+          */}
+          {visibleSites.length > 0 && <span className="nav-count">{visibleSites.length}</span>}
         </button>
 
         {visibleSites.map((site) => {
           const tone = siteTone(site)
           const active = view === 'sites' && props.activeSiteId === site.id
           return (
-            <button
-              key={site.id}
-              className={active ? 'nav-item active' : 'nav-item'}
-              onClick={() => {
-                props.onViewChange('sites')
-                props.onSelectSite(site.id)
-              }}
-              title={site.name}
-            >
-              <span className="nav-icon">
-                <SiteIcon site={site} />
-                {tone && <span className={`nav-dot ${tone}`} />}
-              </span>
-              <span className="nav-label">{site.name}</span>
-              {site.accounts.length > 0 && (
-                <span className="nav-count">{site.accounts.length}</span>
-              )}
-            </button>
+            <div key={site.id} className="nav-site-row">
+              <button
+                className={active ? 'nav-item active' : 'nav-item'}
+                onClick={() => {
+                  props.onViewChange('sites')
+                  props.onSelectSite(site.id)
+                }}
+                title={site.name}
+              >
+                <span className="nav-icon">
+                  <SiteIcon site={site} />
+                  {tone && <span className={`nav-dot ${tone}`} />}
+                </span>
+                <span className="nav-label">{site.name}</span>
+                {site.accounts.length > 0 && (
+                  <span className="nav-count">{site.accounts.length}</span>
+                )}
+              </button>
+              {/* 悬停才出现，避免平时干扰阅读；键盘聚焦时也可见 */}
+              <button
+                className="nav-hide-toggle"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  props.onToggleSiteHidden(site.id, true)
+                }}
+                title={`从侧栏收起「${site.name}」（账号与数据不变）`}
+                aria-label={`从侧栏收起 ${site.name}`}
+              >
+                <EyeOff size={13} />
+              </button>
+            </div>
           )
         })}
 
         {visibleSites.length === 0 && !collapsed && (
           <div className="hint sidebar-hint">
-            还没有站点，点击上方「添加」。
+            {sites.length > 0
+              ? '所有站点都已从侧栏收起，点「全部站点」可查看并恢复。'
+              : '还没有站点，点击上方「添加」。'}
           </div>
         )}
 
@@ -151,15 +174,6 @@ export function Sidebar(props: Props): React.JSX.Element {
           </span>
           <span className="nav-label">设置</span>
         </button>
-
-        {hiddenCount > 0 && (
-          <button className="nav-item" onClick={props.onShowAllHidden} title="显示全部已隐藏站点">
-            <span className="nav-icon">
-              <Eye size={16} />
-            </span>
-            <span className="nav-label">显示全部（{hiddenCount}）</span>
-          </button>
-        )}
       </div>
 
       <div className="sidebar-foot">

@@ -8,6 +8,8 @@ import {
 } from '../auth/fill'
 import { totp } from '../auth/totp'
 import { accountPartition } from './partition'
+import { safeCurrentUrl, withHiddenWindow } from './hiddenWindow'
+import { withPartitionLock } from './partitionLock'
 import { isProviderSessionCookie } from './reloginSession'
 import { captureProviderCookies, restoreProviderCookies } from './providerSession'
 import type { ReloginAttempt } from './reloginSession'
@@ -163,7 +165,23 @@ export async function silentReauth(
     }
   }
 
-  const ses = session.fromPartition(accountPartition(site.id, account.id))
+  const partition = accountPartition(site.id, account.id)
+  // 同一分区可能被「刷新额度」「签到」「后台恢复」三条链路同时触发，
+  // 各自取一份 state 去兑换，先成功的会让另一份 state 失效。
+  // 排队执行，保证同一账号同时只有一个授权窗口。
+  return withPartitionLock(partition, () =>
+    silentReauthInWindow(site, provider, deps, partition)
+  )
+}
+
+async function silentReauthInWindow(
+  site: Site,
+  provider: 'github' | 'linuxdo',
+  deps: SilentReauthDeps,
+  partition: string
+): Promise<ReloginAttempt> {
+  const credential = deps.credential
+  const ses = session.fromPartition(partition)
   if (deps.proxy) {
     try {
       await ses.setProxy({ proxyRules: deps.proxy })
@@ -176,158 +194,161 @@ export async function silentReauth(
   if ('error' in seed) return { ok: false, error: seed.error }
 
   const base = site.baseUrl.replace(/\/+$/, '')
-  const win = new BrowserWindow({
-    show: false,
-    width: 1000,
-    height: 760,
-    skipTaskbar: true,
-    webPreferences: {
-      session: ses,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      backgroundThrottling: false
-    }
-  })
-
   const expectedState = seed.state
   const timeout = deps.timeoutMs ?? 45_000
 
-  return new Promise<ReloginAttempt>((resolve) => {
-    let settled = false
-    let submitted = false
-    const done = (r: ReloginAttempt): void => {
-      if (settled) return
-      settled = true
-      try {
-        win.destroy()
-      } catch {
-        // 窗口可能已被回收
+  return withHiddenWindow<ReloginAttempt>(
+    {
+      label: 'silent-reauth',
+      create: () =>
+        new BrowserWindow({
+          show: false,
+          width: 1000,
+          height: 760,
+          skipTaskbar: true,
+          webPreferences: {
+            session: ses,
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            backgroundThrottling: false
+          }
+        }),
+      timeoutMs: timeout,
+      fallback: (reason, detail) => {
+        if (reason === 'closed') return { ok: false, error: '授权窗口已关闭' }
+        if (reason === 'error') {
+          return { ok: false, error: `静默重授权执行失败：${detail ?? '未知原因'}` }
+        }
+        return { ok: false, error: '静默重授权超时，请手动点「重新授权」' }
       }
-      resolve(r)
-    }
+    },
+    async ({ win, aborted, settle }) => {
+      // 任务体本身不返回值：结果由导航事件驱动，通过 settle 提前结束。
+      // 返回一个永远 pending 的 Promise，让超时/关闭/异常兜底生效。
+      let submitted = false
 
-    const timer = setTimeout(
-      () => done({ ok: false, error: '静默重授权超时，请手动点「重新授权」' }),
-      timeout
-    )
-    timer.unref?.()
+      /** 授权页出现「需要密码/验证」时说明分区登录态已失效，交还用户。 */
+      const run = async (): Promise<void> => {
+        if (aborted() || win.isDestroyed()) return
+        const url = safeCurrentUrl(win)
+        if (!url) return
 
-    /** 授权页出现「需要密码/验证」时说明分区登录态已失效，交还用户。 */
-    const run = async (): Promise<void> => {
-      if (settled || win.isDestroyed()) return
-      const url = win.webContents.getURL()
-      if (!url) return
-
-      try {
-        const payload = {
-          username: credential?.username ?? '',
-          password: credential?.password,
-          otp: credential?.totpSecret ? totp(credential.totpSecret) : undefined
-        }
-
-        // 授权确认页优先
-        const authScript = provider === 'linuxdo' ? linuxdoApproveScript() : githubAuthorizeScript()
-        const authRaw = await win.webContents.executeJavaScript(authScript, true)
-        const auth = typeof authRaw === 'string' ? JSON.parse(authRaw) : null
-        if (auth?.step === 'authorized' || auth?.step === 'already-authorized') return
-        if (auth?.step === 'invalid-redirect') {
-          done({ ok: false, error: '站点的 OAuth 应用未登记该回调地址' })
-          return
-        }
-
-        if (submitted) return
-
-        // 落到登录表单 = 分区里的第三方登录态已失效，静默做不了
-        const loginScript = provider === 'linuxdo' ? linuxdoLoginScript(payload) : githubLoginScript(payload)
-        const raw = await win.webContents.executeJavaScript(loginScript, true)
-        const st = typeof raw === 'string' ? JSON.parse(raw) : null
-        if (st?.step === 'submitted' || st?.step === 'submitted-otp') {
-          submitted = true
-          return
-        }
-        if (st?.step === 'need-otp' || st?.step === 'manual') {
-          done({
-            ok: false,
-            error: '第三方登录态已失效，需要手动重新授权（可能要求输入密码或人机验证）'
-          })
-        }
-      } catch {
-        // 注入失败不致命，等下一次导航再试
-      }
-    }
-
-    const callback = async (url: string): Promise<void> => {
-      if (settled) return
-      try {
-        const u = new URL(url)
-        const error = u.searchParams.get('error')
-        if (error) {
-          done({ ok: false, error: `授权被拒绝：${error}` })
-          return
-        }
-        const code = u.searchParams.get('code')
-        const state = u.searchParams.get('state') ?? ''
-        if (!code) return
-        if (state !== expectedState) {
-          done({ ok: false, error: '授权回调 state 不匹配，已拒绝' })
-          return
-        }
-        // 用分区 fetch 兑换，会话 Cookie 直接落在这个分区
-        const res = await ses.fetch(
-          `${base}/api/oauth/${provider}?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`,
-          { headers: { Accept: 'application/json' } }
-        )
-        const text = await res.text()
-        let json: Record<string, unknown> | null = null
         try {
-          json = JSON.parse(text) as Record<string, unknown>
+          const payload = {
+            username: credential?.username ?? '',
+            password: credential?.password,
+            otp: credential?.totpSecret ? totp(credential.totpSecret) : undefined
+          }
+
+          // 授权确认页优先
+          const authScript = provider === 'linuxdo' ? linuxdoApproveScript() : githubAuthorizeScript()
+          const authRaw = await win.webContents.executeJavaScript(authScript, true)
+          const auth = typeof authRaw === 'string' ? JSON.parse(authRaw) : null
+          if (auth?.step === 'authorized' || auth?.step === 'already-authorized') return
+          if (auth?.step === 'invalid-redirect') {
+            settle({ ok: false, error: '站点的 OAuth 应用未登记该回调地址' })
+            return
+          }
+
+          if (submitted) return
+
+          // 落到登录表单 = 分区里的第三方登录态已失效，静默做不了
+          const loginScript = provider === 'linuxdo' ? linuxdoLoginScript(payload) : githubLoginScript(payload)
+          const raw = await win.webContents.executeJavaScript(loginScript, true)
+          const st = typeof raw === 'string' ? JSON.parse(raw) : null
+          if (st?.step === 'submitted' || st?.step === 'submitted-otp') {
+            submitted = true
+            return
+          }
+          if (st?.step === 'need-otp' || st?.step === 'manual') {
+            settle({
+              ok: false,
+              error: '第三方登录态已失效，需要手动重新授权（可能要求输入密码或人机验证）'
+            })
+          }
         } catch {
-          json = null
+          // 注入失败不致命，等下一次导航再试
         }
-        if (res.status === 409 || /AUTH_SESSION_LIMIT/i.test(text)) {
-          done({ ok: false, error: '站点会话数已达上限，请到站点端退出多余设备' })
-          return
+      }
+
+      const callback = async (url: string): Promise<void> => {
+        if (aborted()) return
+        try {
+          const u = new URL(url)
+          const error = u.searchParams.get('error')
+          if (error) {
+            settle({ ok: false, error: `授权被拒绝：${error}` })
+            return
+          }
+          const code = u.searchParams.get('code')
+          const state = u.searchParams.get('state') ?? ''
+          if (!code) return
+          if (state !== expectedState) {
+            settle({ ok: false, error: '授权回调 state 不匹配，已拒绝' })
+            return
+          }
+          // 用分区 fetch 兑换，会话 Cookie 直接落在这个分区
+          const res = await ses.fetch(
+            `${base}/api/oauth/${provider}?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`,
+            { headers: { Accept: 'application/json' } }
+          )
+          const text = await res.text()
+          let json: Record<string, unknown> | null = null
+          try {
+            json = JSON.parse(text) as Record<string, unknown>
+          } catch {
+            json = null
+          }
+          if (res.status === 409 || /AUTH_SESSION_LIMIT/i.test(text)) {
+            settle({ ok: false, error: '站点会话数已达上限，请到站点端退出多余设备' })
+            return
+          }
+          if (json?.success !== true) {
+            settle({
+              ok: false,
+              error: `凭据交换失败：${(json?.message as string) || `HTTP ${res.status}`}`
+            })
+            return
+          }
+          const data = json.data as Record<string, unknown> | undefined
+          const token =
+            (typeof data?.access_token === 'string' && data.access_token) ||
+            (typeof data?.token === 'string' && data.token) ||
+            undefined
+          const cookies = await ses.cookies.get({ url: base })
+          const cookie = cookies.map((c) => `${c.name}=${c.value}`).join('; ')
+          settle({ ok: true, cookie, token })
+        } catch (e) {
+          settle({ ok: false, error: e instanceof Error ? e.message : String(e) })
         }
-        if (json?.success !== true) {
-          done({
-            ok: false,
-            error: `凭据交换失败：${(json?.message as string) || `HTTP ${res.status}`}`
-          })
-          return
-        }
-        const data = json.data as Record<string, unknown> | undefined
-        const token =
-          (typeof data?.access_token === 'string' && data.access_token) ||
-          (typeof data?.token === 'string' && data.token) ||
-          undefined
-        const cookies = await ses.cookies.get({ url: base })
-        const cookie = cookies.map((c) => `${c.name}=${c.value}`).join('; ')
-        done({ ok: true, cookie, token })
+      }
+
+      win.webContents.on('did-finish-load', () => void run())
+      win.webContents.on('did-navigate', (_e, url) => void callback(url))
+      win.webContents.on('will-redirect', (_e, url) => void callback(url))
+
+      const authorizeUrl =
+        provider === 'linuxdo'
+          ? `https://connect.linux.do/oauth2/authorize?response_type=code&client_id=${encodeURIComponent(
+              seed.clientId
+            )}&state=${encodeURIComponent(expectedState)}`
+          : `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(
+              seed.clientId
+            )}&state=${encodeURIComponent(expectedState)}&scope=read:user`
+
+      // 加载失败要如实上报（代理挂、DNS 不通），不能被兜底成「超时」
+      try {
+        await win.loadURL(authorizeUrl)
       } catch (e) {
-        done({ ok: false, error: e instanceof Error ? e.message : String(e) })
+        return {
+          ok: false,
+          error: `授权页加载失败：${e instanceof Error ? e.message : String(e)}`
+        }
       }
+
+      // 结果由事件驱动：挂住直到 settle / 超时 / 关闭
+      return new Promise<ReloginAttempt>(() => {})
     }
-
-    win.webContents.on('did-finish-load', () => void run())
-    win.webContents.on('did-navigate', (_e, url) => void callback(url))
-    win.webContents.on('will-redirect', (_e, url) => void callback(url))
-    win.on('closed', () => {
-      if (!settled) {
-        settled = true
-        resolve({ ok: false, error: '授权窗口已关闭' })
-      }
-    })
-
-    const authorizeUrl =
-      provider === 'linuxdo'
-        ? `https://connect.linux.do/oauth2/authorize?response_type=code&client_id=${encodeURIComponent(
-            seed.clientId
-          )}&state=${encodeURIComponent(expectedState)}`
-        : `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(
-            seed.clientId
-          )}&state=${encodeURIComponent(expectedState)}&scope=read:user`
-
-    void win.loadURL(authorizeUrl)
-  })
+  )
 }

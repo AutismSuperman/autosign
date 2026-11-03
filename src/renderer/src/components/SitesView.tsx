@@ -358,7 +358,8 @@ export function SitesView(props: Props): React.JSX.Element {
 
   const siteCardClass = (site: Site): string => {
     const cls = ['site-card']
-    if (site.hidden) cls.push('is-hidden')
+    // 收起只影响侧栏入口：卡片保持正常外观与全部功能，仅加一道位置提示线
+    if (site.hidden) cls.push('is-sidebar-collapsed')
     if (flashId === site.id) cls.push('flash')
     return cls.join(' ')
   }
@@ -444,7 +445,7 @@ export function SitesView(props: Props): React.JSX.Element {
           <div className="empty">
             <Globe size={36} strokeWidth={1.4} className="empty-icon" />
             <div className="empty-title">还没有可见的站点</div>
-            <div>从内置目录添加站点，或在侧栏「显示全部」中恢复已隐藏的站点。</div>
+            <div>从内置目录添加站点，或在「全部站点」里恢复已收起的站点。</div>
             <button className="btn primary" onClick={props.onAddSite}>
               <Plus size={14} />
               添加站点
@@ -538,7 +539,8 @@ export function SitesView(props: Props): React.JSX.Element {
                   <span className="tag">{MODE_LABEL[site.mode]}</span>
                   <span className="tag">{KIND_LABEL[site.kind] ?? site.kind}</span>
                   {site.custom && <span className="tag">自定义</span>}
-                  {site.hidden && <span className="tag warn">已隐藏</span>}
+                  {/* 「已收起」而不是「已隐藏」：它只影响侧栏入口，账号照常签到 */}
+                  {site.hidden && <span className="tag">侧栏已收起</span>}
                 </span>
               </span>
               <SiteSummary site={site} />
@@ -560,12 +562,21 @@ export function SitesView(props: Props): React.JSX.Element {
                 >
                   <ChevronDown size={15} />
                 </button>
+                {/*
+                  图标表示**当前状态**，不是「点了会变成什么」：
+                  睁眼 = 正在侧栏显示；闭眼 = 已从侧栏收起。
+                  这样扫一眼卡片就知道哪些收起了，不必逐个念提示。
+                */}
                 <button
-                  className="icon-btn"
+                  className={site.hidden ? 'icon-btn muted' : 'icon-btn'}
                   onClick={() => props.onUpdateSite(site.id, { hidden: !site.hidden })}
-                  title={site.hidden ? '取消隐藏' : '从列表隐藏（数据保留）'}
+                  title={
+                    site.hidden
+                      ? '当前已从侧栏收起，点击重新显示（账号与数据一直未变）'
+                      : '当前显示在侧栏，点击收起（账号、额度与签到都不受影响）'
+                  }
                 >
-                  {site.hidden ? <Eye size={15} /> : <EyeOff size={15} />}
+                  {site.hidden ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
                 <button className="icon-btn" onClick={() => setEditSite(site)} title="编辑站点">
                   <Pencil size={14} />

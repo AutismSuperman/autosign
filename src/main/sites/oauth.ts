@@ -10,6 +10,7 @@ import {
 } from '../auth/fill'
 import { totp } from '../auth/totp'
 import { accountPartition } from './partition'
+import { safeCurrentUrl, withHiddenWindow } from './hiddenWindow'
 
 /**
  * OAuth 授权窗口。
@@ -182,6 +183,17 @@ export async function runOAuth(
 
   const expectedState = seed.state
 
+  /* 交互式授权窗口的超时策略。
+   *
+   * 这个窗口跟另外两个隐藏窗口不同：它**会显示给用户**，等的是人的操作，
+   * 所以不能用 45 秒那种机器预算。但也不能像原来那样完全没有上限 ——
+   * 用户点开就去忙别的，窗口会一直挂着、Promise 永远 pending、分区被占住。
+   *
+   * 折中：给一个足够宽松的总上限，并在窗口交还给用户时用 `extend` 重新计时，
+   * 让「机器自动填表」和「人等在这里」用两套不同的预算。 */
+  const AUTO_TIMEOUT_MS = 60_000
+  const HUMAN_TIMEOUT_MS = 10 * 60_000
+
   const win = new BrowserWindow({
     width: 1000,
     height: 780,
@@ -196,170 +208,191 @@ export async function runOAuth(
     }
   })
 
-  return new Promise<OAuthResult>((resolve) => {
-    let settled = false
-    /** 本轮是否已经提交过登录表单：提交后绝不重复提交，避免触发风控。 */
-    let loginSubmitted = false
-    let fillAttempts = 0
-    let lastFillUrl = ''
-    const finish = (r: OAuthResult): void => {
-      if (settled) return
-      settled = true
-      try {
-        win.destroy()
-      } catch {
-        // 窗口可能已被用户关闭
+  return withHiddenWindow<OAuthResult>(
+    {
+      label: 'oauth',
+      // 窗口已在上方创建（需要提前挂 ready-to-show），这里直接复用
+      create: () => win,
+      timeoutMs: AUTO_TIMEOUT_MS,
+      fallback: (reason, detail) => {
+        if (reason === 'closed') return { ok: false, error: '授权窗口已关闭' }
+        if (reason === 'error') {
+          return { ok: false, error: `授权流程执行失败：${detail ?? '未知原因'}` }
+        }
+        return { ok: false, error: '授权超过 10 分钟未完成，窗口已关闭；可重新发起授权' }
       }
-      resolve(r)
-    }
+    },
+    async ({ aborted, settle, extend }) => {
+      /** 本轮是否已经提交过登录表单：提交后绝不重复提交，避免触发风控。 */
+      let loginSubmitted = false
+      let fillAttempts = 0
+      let lastFillUrl = ''
+      /** 是否已把窗口交还给用户：交还后改用人类预算，且不再自动填表。 */
+      let handedToHuman = false
 
-    /**
-     * 在登录页 / 授权页尝试自动化。
-     *
-     * 页面可能是 SPA，表单要等前端挂载后才出现，因此同一地址会重试若干轮。
-     * 一旦登录已提交就不再重复，避免同一表单被连点触发风控；
-     * 授权确认页的「允许」由脚本内的 sessionStorage 闸门保证只点一次。
-     *
-     * 没有提供凭据时也能用：已登录的 GitHub 会话会直接落到授权页，
-     * 此时自动点「Authorize」同样能完成授权，不需要密码。
-     */
-    const tryAutofill = async (): Promise<void> => {
-      if (settled) return
-      const url = win.webContents.getURL()
-      if (!url || /^\w+:\/\/$/.test(url)) return
-      if (url === lastFillUrl && fillAttempts >= 4) return
-      if (url !== lastFillUrl) {
-        lastFillUrl = url
-        fillAttempts = 0
+      /** 把窗口显示出来并切到人类预算。 */
+      const handOver = (): void => {
+        if (aborted() || win.isDestroyed()) return
+        if (!win.isVisible()) win.show()
+        if (!handedToHuman) {
+          handedToHuman = true
+          extend(HUMAN_TIMEOUT_MS)
+        }
       }
 
-      fillAttempts++
-      try {
-        // 给前端渲染留出时间；首次进来常常还没挂载表单
-        await new Promise((r) => setTimeout(r, fillAttempts === 1 ? 600 : 1200))
-        if (settled || win.isDestroyed()) return
-
-        const payload = {
-          username: credential?.username ?? '',
-          password: credential?.password,
-          otp: credential?.totpSecret ? totp(credential.totpSecret) : undefined
+      /**
+       * 在登录页 / 授权页尝试自动化。
+       *
+       * 页面可能是 SPA，表单要等前端挂载后才出现，因此同一地址会重试若干轮。
+       * 一旦登录已提交就不再重复，避免同一表单被连点触发风控；
+       * 授权确认页的「允许」由脚本内的 sessionStorage 闸门保证只点一次。
+       *
+       * 没有提供凭据时也能用：已登录的 GitHub 会话会直接落到授权页，
+       * 此时自动点「Authorize」同样能完成授权，不需要密码。
+       */
+      const tryAutofill = async (): Promise<void> => {
+        if (aborted() || handedToHuman) return
+        const url = safeCurrentUrl(win)
+        if (!url || /^\w+:\/\/$/.test(url)) return
+        if (url === lastFillUrl && fillAttempts >= 4) return
+        if (url !== lastFillUrl) {
+          lastFillUrl = url
+          fillAttempts = 0
         }
 
-        // 授权确认页优先：已登录时根本不会出现登录表单
-        const authorizeScript = prov === 'linuxdo' ? linuxdoApproveScript() : githubAuthorizeScript()
-        const authRaw = await win.webContents.executeJavaScript(authorizeScript, true)
-        const authState =
-          typeof authRaw === 'string'
-            ? (JSON.parse(authRaw) as { step?: string; done?: boolean; msg?: string })
-            : null
-        if (authState?.step === 'authorized') return
-        if (authState?.step === 'already-authorized') return
-        if (authState?.step === 'invalid-redirect') {
-          finish({
-            ok: false,
-            error:
-              'GitHub 拒绝了回调地址：站点后台登记的 OAuth 应用未包含该地址，请联系站点管理员，或用邮箱/密码方式登录'
-          })
-          return
-        }
+        fillAttempts++
+        try {
+          // 给前端渲染留出时间；首次进来常常还没挂载表单
+          await new Promise((r) => setTimeout(r, fillAttempts === 1 ? 600 : 1200))
+          if (aborted() || win.isDestroyed()) return
 
-        // 登录提交后页面会跳到授权确认页：此时仍要允许授权脚本继续工作，
-        // 否则「登录 → 授权」链路会在这里断掉，表现为窗口一直停着。
-        if (loginSubmitted) {
-          if (authState?.step === 'authorize-missing') {
-            // 确实是授权页但找不到按钮（或页面还没渲染完）：再给几轮机会
-            if (fillAttempts < 6) {
-              await new Promise((r) => setTimeout(r, 1000))
-              if (!settled && !win.isDestroyed()) await tryAutofill()
-            }
+          const payload = {
+            username: credential?.username ?? '',
+            password: credential?.password,
+            otp: credential?.totpSecret ? totp(credential.totpSecret) : undefined
           }
-          return
-        }
 
-        const script = prov === 'linuxdo' ? linuxdoLoginScript(payload) : githubLoginScript(payload)
-        const raw = await win.webContents.executeJavaScript(script, true)
-        const state =
-          typeof raw === 'string'
-            ? (JSON.parse(raw) as { step?: string; done?: boolean; msg?: string })
-            : null
+          // 授权确认页优先：已登录时根本不会出现登录表单
+          const authorizeScript = prov === 'linuxdo' ? linuxdoApproveScript() : githubAuthorizeScript()
+          const authRaw = await win.webContents.executeJavaScript(authorizeScript, true)
+          const authState =
+            typeof authRaw === 'string'
+              ? (JSON.parse(authRaw) as { step?: string; done?: boolean; msg?: string })
+              : null
+          if (authState?.step === 'authorized') return
+          if (authState?.step === 'already-authorized') return
+          if (authState?.step === 'invalid-redirect') {
+            settle({
+              ok: false,
+              error:
+                'GitHub 拒绝了回调地址：站点后台登记的 OAuth 应用未包含该地址，请联系站点管理员，或用邮箱/密码方式登录'
+            })
+            return
+          }
 
-        if (state?.step === 'manual' || state?.step === 'need-otp') {
-          // 需要人工完成验证：把窗口显示出来交还用户，不再重试
-          if (!win.isVisible()) win.show()
-          return
+          // 登录提交后页面会跳到授权确认页：此时仍要允许授权脚本继续工作，
+          // 否则「登录 → 授权」链路会在这里断掉，表现为窗口一直停着。
+          if (loginSubmitted) {
+            if (authState?.step === 'authorize-missing') {
+              // 确实是授权页但找不到按钮（或页面还没渲染完）：再给几轮机会
+              if (fillAttempts < 6) {
+                await new Promise((r) => setTimeout(r, 1000))
+                if (!aborted() && !win.isDestroyed()) await tryAutofill()
+              }
+            }
+            return
+          }
+
+          const script = prov === 'linuxdo' ? linuxdoLoginScript(payload) : githubLoginScript(payload)
+          const raw = await win.webContents.executeJavaScript(script, true)
+          const state =
+            typeof raw === 'string'
+              ? (JSON.parse(raw) as { step?: string; done?: boolean; msg?: string })
+              : null
+
+          if (state?.step === 'manual' || state?.step === 'need-otp') {
+            // 需要人工完成验证：把窗口交给用户，不再自动重试
+            handOver()
+            return
+          }
+          if (state?.step === 'submitted' || state?.step === 'submitted-otp') {
+            loginSubmitted = true
+            return
+          }
+          if (state?.done === false && fillAttempts < 6) {
+            await tryAutofill()
+          }
+        } catch {
+          // 注入失败不影响正常手动登录
         }
-        if (state?.step === 'submitted' || state?.step === 'submitted-otp') {
-          loginSubmitted = true
-          return
-        }
-        if (state?.done === false && fillAttempts < 6) {
-          await tryAutofill()
-        }
-      } catch {
-        // 注入失败不影响正常手动登录
       }
-    }
 
-    const handleCallback = async (url: string): Promise<void> => {
+      const handleCallback = async (url: string): Promise<void> => {
+        try {
+          const u = new URL(url)
+          const code = u.searchParams.get('code') ?? ''
+          const state = u.searchParams.get('state') ?? ''
+          const error = u.searchParams.get('error') ?? ''
+          if (error) {
+            settle({ ok: false, error: `授权被拒绝：${error}` })
+            return
+          }
+          if (!code) return
+          // state 必须与本轮严格一致，否则视为串流并拒绝
+          if (state !== expectedState) {
+            settle({ ok: false, error: '授权回调 state 不匹配，已拒绝' })
+            return
+          }
+          const exchangeRes = await exchangeCode(base, prov, code, state, ses)
+          settle(exchangeRes)
+        } catch (e) {
+          settle({ ok: false, error: e instanceof Error ? e.message : String(e) })
+        }
+      }
+
+      // 页面加载完成后尝试预填（Spa 会多次导航，用去重避免重复提交）
+      win.webContents.on('did-finish-load', () => {
+        void tryAutofill()
+      })
+
+      win.webContents.on('will-redirect', (_e, url) => {
+        void handleCallback(url)
+      })
+      win.webContents.on('will-navigate', (_e, url) => {
+        void handleCallback(url)
+      })
+      win.webContents.on('did-navigate', (_e, url) => {
+        void handleCallback(url)
+      })
+
+      win.once('ready-to-show', () => {
+        // 有保存的凭据时先不显示：填表和授权都在后台完成，用户不会看到窗口一闪。
+        // 需要人工验证时由 tryAutofill 主动显示。
+        // 没有凭据就必须立刻显示，否则用户不知道要登录。
+        if (!credential) handOver()
+      })
+      // 兜底：若长时间没有进展（例如站点改了登录页结构导致填不进去），
+      // 把窗口显示出来让用户接手，避免流程静默卡死。
+      if (credential) {
+        setTimeout(() => {
+          if (!aborted() && !win.isDestroyed() && !win.isVisible()) handOver()
+        }, 20_000)
+      }
+
+      // 加载失败要如实上报（代理挂、DNS 不通），不能被兜底成「超时」
       try {
-        const u = new URL(url)
-        const code = u.searchParams.get('code') ?? ''
-        const state = u.searchParams.get('state') ?? ''
-        const error = u.searchParams.get('error') ?? ''
-        if (error) {
-          finish({ ok: false, error: `授权被拒绝：${error}` })
-          return
-        }
-        if (!code) return
-        // state 必须与本轮严格一致，否则视为串流并拒绝
-        if (state !== expectedState) {
-          finish({ ok: false, error: '授权回调 state 不匹配，已拒绝' })
-          return
-        }
-        const exchangeRes = await exchangeCode(base, prov, code, state, ses)
-        finish(exchangeRes)
+        await win.loadURL(providerAuthorizeUrl(prov, seed.clientId, expectedState))
       } catch (e) {
-        finish({ ok: false, error: e instanceof Error ? e.message : String(e) })
+        return {
+          ok: false,
+          error: `授权页加载失败：${e instanceof Error ? e.message : String(e)}`
+        }
       }
+
+      // 结果由导航事件驱动：挂住直到 settle / 超时 / 窗口关闭
+      return new Promise<OAuthResult>(() => {})
     }
-
-    // 页面加载完成后尝试预填（Spa 会多次导航，用去重避免重复提交）
-    win.webContents.on('did-finish-load', () => {
-      void tryAutofill()
-    })
-
-    win.webContents.on('will-redirect', (_e, url) => {
-      void handleCallback(url)
-    })
-    win.webContents.on('will-navigate', (_e, url) => {
-      void handleCallback(url)
-    })
-    win.webContents.on('did-navigate', (_e, url) => {
-      void handleCallback(url)
-    })
-
-    win.on('closed', () => {
-      if (!settled) {
-        settled = true
-        resolve({ ok: false, error: '授权窗口已关闭' })
-      }
-    })
-
-    win.once('ready-to-show', () => {
-      // 有保存的凭据时先不显示：填表和授权都在后台完成，用户不会看到窗口一闪。
-      // 需要人工验证时由 tryAutofill 主动 show()。
-      // 没有凭据就必须立刻显示，否则用户不知道要登录。
-      if (!credential) win.show()
-    })
-    // 兜底：若长时间没有进展（例如站点改了登录页结构导致填不进去），
-    // 把窗口显示出来让用户接手，避免流程静默卡死。
-    if (credential) {
-      setTimeout(() => {
-        if (!settled && !win.isDestroyed() && !win.isVisible()) win.show()
-      }, 20_000)
-    }
-    void win.loadURL(providerAuthorizeUrl(prov, seed.clientId, expectedState))
-  })
+  )
 }
 
 /**

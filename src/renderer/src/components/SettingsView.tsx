@@ -288,20 +288,14 @@ export function SettingsView(props: Props): React.JSX.Element {
               <EyeOff size={16} />
             </span>
             <div className="field-text">
-              <div className="field-label">隐藏站点</div>
+              <div className="field-label">侧栏收起</div>
               <span className="field-hint">
-                关闭后可让已隐藏的站点重新出现在侧栏，账号与数据不会丢失。
+                鼠标移到侧栏的站点行上，点右侧眼睛图标即可把它从侧栏收起；
+                在「全部站点」里点同一个图标随时恢复。账号、额度与定时签到都不受影响。
               </span>
             </div>
             <div className="field-body">
-              <label className="check-label">
-                <input
-                  type="checkbox"
-                  checked={settings.hideHiddenSites}
-                  onChange={(e) => void props.onChange({ hideHiddenSites: e.target.checked })}
-                />
-                隐藏的站点不在列表显示
-              </label>
+              <span className="field-static">在侧栏逐站切换</span>
             </div>
           </div>
           <div className="field">

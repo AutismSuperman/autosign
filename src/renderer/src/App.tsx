@@ -190,18 +190,6 @@ export function App(): React.JSX.Element {
     []
   )
 
-  /** 一次恢复所有隐藏的站点。 */
-  const showAllHidden = useCallback(async () => {
-    const hidden = (config?.sites ?? []).filter((s) => s.hidden)
-    if (hidden.length === 0) return
-    let latest: AppConfig | null = null
-    for (const s of hidden) {
-      latest = await window.api.config.updateSite(s.id, { hidden: false })
-    }
-    if (latest) setConfig(latest)
-    showToast(`已恢复 ${hidden.length} 个隐藏站点`, 'success')
-  }, [config, showToast])
-
   /** 侧栏选中站点：主视图只显示该站点，批量操作也只作用于它。 */
   const handleSelectSite = useCallback((siteId: string | null) => {
     setActiveSiteId(siteId)
@@ -458,10 +446,15 @@ export function App(): React.JSX.Element {
     [config]
   )
 
+  /**
+   * 侧栏列表：只列未收起的站点。
+   *
+   * 「收起」只影响侧栏，**不影响主视图** —— 这是关键区别。主视图是工作区，
+   * 用户在那里看额度、点签到；侧栏是快捷入口。把两者绑在一起会出现
+   * 「收起了就再也找不到」的死角，旧版正是这样。
+   */
   const sidebarSites = useMemo(() => {
-    const filtered = (config?.sites ?? []).filter(
-      (s) => !(config?.settings.hideHiddenSites && hiddenSites.has(s.id))
-    )
+    const filtered = (config?.sites ?? []).filter((s) => !hiddenSites.has(s.id))
     return sortSites(
       filtered,
       config?.settings.siteSort ?? 'custom',
@@ -469,24 +462,27 @@ export function App(): React.JSX.Element {
     )
   }, [config, hiddenSites])
 
+  /** 主视图列表：始终包含全部站点，收起过的也在（带「已收起」标记可原地恢复）。 */
   const visibleSites = useMemo(() => {
-    const filtered = scopeSites.filter(
-      (s) => !(config?.settings.hideHiddenSites && hiddenSites.has(s.id))
-    )
-    // 主视图只用「当前范围」内的站点
     return sortSites(
-      filtered,
+      scopeSites,
       config?.settings.siteSort ?? 'custom',
       config?.settings.siteSortDir ?? 'desc'
     )
-  }, [scopeSites, config, hiddenSites])
+  }, [scopeSites, config])
 
-  /** 选中的站点被移除或隐藏后，回到「全部站点」，避免主视图空白。 */
+  /**
+   * 选中的站点被**移除**后，回到「全部站点」，避免主视图空白。
+   *
+   * 注意判据是「站点是否还存在」，不是「是否还在侧栏」：
+   * 从侧栏收起某站点时，用户很可能正看着它的详情，此时把选中项踢掉
+   * 会让界面突然跳走 —— 收起侧栏入口和切换查看对象是两件事。
+   */
   useEffect(() => {
     if (!activeSiteId) return
-    const stillVisible = sidebarSites.some((s) => s.id === activeSiteId)
-    if (!stillVisible) setActiveSiteId(null)
-  }, [activeSiteId, sidebarSites])
+    const exists = (config?.sites ?? []).some((s) => s.id === activeSiteId)
+    if (!exists) setActiveSiteId(null)
+  }, [activeSiteId, config])
 
   /** 切换排序：金额类默认从高到低，名称默认从 A 到 Z。 */
   if (!config) {
@@ -521,7 +517,6 @@ export function App(): React.JSX.Element {
           void updateSettings({ sidebarCollapsed: !config.settings.sidebarCollapsed })
         }
         onToggleSiteHidden={(siteId, hidden) => void updateSite(siteId, { hidden })}
-        onShowAllHidden={() => void showAllHidden()}
         onAddSite={() => setAddOpen(true)}
       />
 
