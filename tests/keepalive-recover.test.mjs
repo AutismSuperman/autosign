@@ -19,7 +19,10 @@ const require = createRequire(import.meta.url)
 
 mkdirSync('.tmp', { recursive: true })
 await build({
-  entryPoints: ['src/main/sites/keepAlive.ts'],
+  stdin: {
+    contents: "export * from './src/main/sites/keepAlive'; export { withPartitionLock } from './src/main/sites/partitionLock'",
+    resolveDir: process.cwd()
+  },
   bundle: true,
   platform: 'node',
   format: 'cjs',
@@ -28,7 +31,7 @@ await build({
   logLevel: 'error'
 })
 
-const { startKeepAlive } = require('../.tmp/keepalive.cjs')
+const { startKeepAlive, keepAliveOnce, withPartitionLock } = require('../.tmp/keepalive.cjs')
 
 const results = []
 const check = (name, ok, detail) => {
@@ -171,6 +174,32 @@ function makeDeps(recover) {
   const pending = timers.timers.filter((t) => !t.cleared && !t.fired)
   check('停止后没有未清理的恢复定时器', pending.length === 0, String(pending.length))
   timers.restore()
+}
+
+{
+  let release
+  let reads = 0
+  const gate = new Promise((resolve) => { release = resolve })
+  const busy = withPartitionLock('account-operation:test-account', () => gate)
+  const account = {
+    id: 'test-account', cookie: 'session=test',
+    token: `test.${Buffer.from('{"exp":1}').toString('base64url')}.test`
+  }
+  const renewal = keepAliveOnce({
+    proxy: async () => '',
+    sites: () => [{ id: 'test-site', baseUrl: 'https://example.com', accounts: [account] }],
+    sessionFor: () => ({
+      proxy: '', onRenewed: async () => {}, log: () => {},
+      readAccount: () => { reads++; return { id: account.id } }
+    }),
+    log: () => {}
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  check('签到占用账号时保活等待，不并发续期', reads === 0)
+  release()
+  await busy
+  await renewal
+  check('保活等待结束后读取最新会话', reads === 1)
 }
 
 const failed = results.filter((r) => !r.ok)

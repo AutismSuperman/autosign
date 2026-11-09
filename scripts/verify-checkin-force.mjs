@@ -36,7 +36,7 @@ const today = new Date(Math.floor((now + offset) / day) * day).toISOString().sli
 
 /** 今天已签、但金额来源是「余额增量」——正是用户现场的状态。 */
 const signedToday = {
-  at: now - 3_600_000,
+  at: Math.max(now - 3_600_000, Math.floor((now + offset) / day) * day - offset),
   date: today,
   ok: true,
   already: false,

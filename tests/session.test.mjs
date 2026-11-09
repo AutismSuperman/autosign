@@ -29,7 +29,7 @@ await build({
   logLevel: 'error'
 })
 
-const { requestWithHealing, needsRefresh, isSessionLimit, isSessionDead } = require('../.tmp/session.cjs')
+const { requestWithHealing, renewToken, needsRefresh, isSessionLimit, isSessionDead } = require('../.tmp/session.cjs')
 
 const results = []
 const check = (name, ok, detail) => {
@@ -191,6 +191,23 @@ check(
 )
 check('isSessionDead 识别 401', isSessionDead(401, '{"message":"未登录"}') === true)
 check('isSessionDead 不误判 200', isSessionDead(200, 'ok') === false)
+
+// Early exits must not retain a completed promise after credentials change.
+{
+  refreshCalls = 0
+  account = { ...account, id: 'test-missing-cookie', cookie: undefined, token: undefined }
+  check('无 cookie 时不续期', await renewToken(site, account, deps, true) === '')
+  account = { ...account, cookie: 'session=restored-cookie', token: 'tok-old' }
+  const restored = await renewToken(site, account, deps, true)
+  check('重新授权补回 cookie 后仍能续期', restored === 'tok-new' && refreshCalls === 1)
+}
+{
+  refreshCalls = 0
+  account = { ...account, id: 'test-valid-token', token: 'opaque-token' }
+  check('有效 token 非强制续期直接复用', await renewToken(site, account, deps) === 'opaque-token')
+  const forced = await renewToken(site, account, deps, true)
+  check('有效 token 后续被拒绝时仍能强制续期', forced === 'tok-new' && refreshCalls === 1)
+}
 
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${failed.length === 0 ? 'ALL PASS' : `${failed.length} FAILED`} (${results.length} checks)`)

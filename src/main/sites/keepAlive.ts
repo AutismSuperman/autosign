@@ -1,6 +1,7 @@
 import type { Site } from '../../shared/types'
 import { needsRefresh, renewToken } from './session'
 import type { SessionDeps } from './session'
+import { withPartitionLock } from './partitionLock'
 
 /**
  * 会话保活。
@@ -73,7 +74,9 @@ export async function keepAliveOnce(deps: KeepAliveDeps): Promise<{ renewed: num
       total++
       if (!needsRefresh(account.token)) continue
       try {
-        const token = await renewToken(site, account, deps.sessionFor(site.id, account.id, proxy), false)
+        const token = await withPartitionLock(`account-operation:${account.id}`, () =>
+          renewToken(site, account, deps.sessionFor(site.id, account.id, proxy), false)
+        )
         if (token) renewed++
       } catch {
         // 单个账号续期失败不影响其它账号

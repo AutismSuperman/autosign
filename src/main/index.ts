@@ -5,7 +5,9 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  net,
   Notification,
+  powerMonitor,
   screen,
   shell,
   Tray
@@ -46,7 +48,7 @@ import { startKeepAlive } from './sites/keepAlive'
 import { migrateAccountPartition } from './sites/partitionMigrate'
 import { readApiKeys } from './sites/tokens'
 import { getSiteIcon } from './sites/favicon'
-import { checkedInThisPeriod, needsRewardEnrichment, rewardDate } from './sites/profile'
+import { checkedInThisPeriod, isAnyRouter, needsRewardEnrichment, rewardDate, rewardEpochMs } from './sites/profile'
 import { isUsableTotpSecret, secondsRemaining, totp } from './auth/totp'
 import { accountFromPasswordLogin, passwordLogin } from './auth/passwordLogin'
 import type { SessionDeps } from './sites/session'
@@ -64,6 +66,10 @@ import {
   updaterAvailable
 } from './updater'
 import { releasePageUrl, repoHomeUrl } from './updatePolicy'
+import { CheckinScheduler, scheduleTimeOf } from './scheduler'
+import { ScheduleStateStore } from './scheduleState'
+import { createSingleFlight } from './singleFlight'
+import { withPartitionLock } from './sites/partitionLock'
 
 /**
  * 必须在读取任何 app 路径之前设置应用名。
@@ -99,6 +105,8 @@ let tray: Tray | null = null
 let quitting = false
 /** 「已最小化到托盘」的提示每次运行只弹一次。 */
 let trayHintShown = false
+let scheduler: CheckinScheduler | undefined
+const checkinFlight = createSingleFlight<CheckinResultDto>()
 
 /**
  * 主进程兜底。
@@ -451,6 +459,13 @@ async function doStatus(
   accountId: string,
   opts: { quiet?: boolean } = {}
 ): Promise<StatusResultDto> {
+  return withPartitionLock(`account-operation:${accountId}`, () => doStatusUnlocked(accountId, opts))
+}
+
+async function doStatusUnlocked(
+  accountId: string,
+  opts: { quiet?: boolean } = {}
+): Promise<StatusResultDto> {
   const hit = siteOf(accountId)
   if (!hit) return { ok: false, error: '账号不存在' }
   const proxy = await currentProxy()
@@ -548,6 +563,15 @@ async function ensureSiteProbed(siteId: string, proxy: string): Promise<Site | u
 }
 
 async function doCheckin(
+  accountId: string,
+  opts: { force?: boolean } = {}
+): Promise<CheckinResultDto> {
+  return checkinFlight(accountId, () =>
+    withPartitionLock(`account-operation:${accountId}`, () => doCheckinUnlocked(accountId, opts))
+  )
+}
+
+async function doCheckinUnlocked(
   accountId: string,
   opts: { force?: boolean } = {}
 ): Promise<CheckinResultDto> {
@@ -743,10 +767,23 @@ async function doCheckin(
         },
         runOpts
       )
+    } else if (rebuilt.error) {
+      result = { ...result, message: `${result.message}；${rebuilt.error}` }
     }
   }
   if (result.receipt) {
     await patchAccount(accountId, { lastCheckin: result.receipt })
+  } else if (result.ok && result.already) {
+    await patchAccount(accountId, {
+      lastCheckin: {
+        at: Date.now(),
+        date: rewardDate(Date.now()),
+        ok: true,
+        already: true,
+        message: result.message,
+        rewardSource: 'site'
+      }
+    })
   }
   // 签到成功说明会话可用：清掉可能残留的「需要手动登录」标记
   if (result.ok) {
@@ -920,9 +957,15 @@ function registerIpc(): void {
   ipcMain.handle(IPC.configGet, () => store.get())
 
   ipcMain.handle(IPC.settingsUpdate, async (_e, patch: Partial<Settings>) => {
+    if (patch.schedule && (
+      typeof patch.schedule.enabled !== 'boolean' ||
+      typeof patch.schedule.weekdaysOnly !== 'boolean' ||
+      !scheduleTimeOf(patch.schedule)
+    )) throw new Error('定时设置无效，请使用 HH:mm 格式的本地时间')
     const next = await store.mutate((config) => {
       config.settings = { ...config.settings, ...patch }
     })
+    if (patch.schedule) scheduler?.changed()
     // 主题变化要同步到原生层（滚动条、菜单等），窗口背景色也随之调整
     if (patch.theme) {
       applyNativeTheme()
@@ -1216,7 +1259,7 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.accountStatus, (_e, accountId: string) => doStatus(accountId))
   // 行内「签到 / 重登领取」是手动操作：force=true 表示即使今天已签也真的执行一次。
-  // 批量与定时任务走 runCheckinAll / scheduleNext，不带 force，已签直接跳过。
+  // 批量与定时任务不带 force，已签直接跳过。
   ipcMain.handle(IPC.accountCheckin, (_e, accountId: string, force?: boolean) =>
     doCheckin(accountId, { force: force === true })
   )
@@ -1418,48 +1461,34 @@ function registerIpc(): void {
 }
 
 /** 后台定时签到：由主进程内的 setTimeout 链驱动，不依赖任何窗口。 */
-function scheduleNext(): void {
-  const settings: Settings = store.getSettings()
-  if (!settings.schedule.enabled) return
-  const [hh, mm] = settings.schedule.time.split(':').map((n) => Number(n))
-  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return
-
-  const now = new Date()
-  const next = new Date(now)
-  next.setHours(hh, mm, 0, 0)
-  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1)
-  if (settings.schedule.weekdaysOnly) {
-    while (next.getDay() === 0 || next.getDay() === 6) next.setDate(next.getDate() + 1)
-  }
-
-  const delay = Math.min(next.getTime() - now.getTime(), 2 ** 31 - 1)
-  store.log('info', '调度', `下次自动签到：${next.toLocaleString('zh-CN')}`)
-  setTimeout(async () => {
-    try {
-      store.log('info', '调度', '开始执行定时签到')
-      const config = store.getInternal()
-      let ok = 0
-      let failed = 0
-      for (const site of config.sites) {
-        for (const account of site.accounts) {
-          const r = await doCheckin(account.id)
-          if (r.ok) ok++
-          else failed++
-        }
-      }
-      // 窗口可能已关闭，此时必须用系统通知把结果送达
-      if (Notification.isSupported()) {
-        new Notification({
-          title: failed === 0 ? '自动签到完成' : '自动签到有未成功项',
-          body: `成功 ${ok} 项${failed > 0 ? `，未成功 ${failed} 项（详见运行日志）` : ''}`
-        }).show()
-      }
-    } catch (e) {
-      store.log('err', '调度', e instanceof Error ? e.message : String(e))
-    } finally {
-      scheduleNext()
+async function startScheduler(): Promise<void> {
+  const stateStore = new ScheduleStateStore(join(app.getPath('userData'), 'schedule-state.json'))
+  scheduler = new CheckinScheduler({
+    settings: () => store.getSettings().schedule,
+    accounts: (now) => store.getInternal().sites.flatMap((site) =>
+      site.accounts.map((account) => ({
+        id: account.id,
+        checked: checkedInThisPeriod(account.lastCheckin, now),
+        notBefore: site.mode === 'RELOGIN' && isAnyRouter(site.baseUrl)
+          ? rewardEpochMs(now) + 8 * 3_600_000
+          : undefined
+      }))
+    ),
+    checkin: (id) => doCheckin(id),
+    save: (state) => stateStore.save(state),
+    online: () => net.isOnline(),
+    log: (level, message, accountId) => store.log(level, '调度', message, { accountId }),
+    notify: ({ succeeded, retrying, stopped }) => {
+      if (!Notification.isSupported()) return
+      new Notification({
+        title: retrying || stopped ? '自动签到有未完成项' : '自动签到完成',
+        body: `本轮成功 ${succeeded} 项，等待重试 ${retrying} 项，需处理 ${stopped} 项（详见运行日志）`
+      }).show()
     }
-  }, delay).unref()
+  }, await stateStore.read())
+  scheduler.start()
+  powerMonitor.on('resume', () => scheduler?.changed())
+  powerMonitor.on('unlock-screen', () => scheduler?.changed())
 }
 
 /** 启动时把旧分区里的 Cookie 搬到统一分区，只做一次。 */
@@ -1722,7 +1751,7 @@ app.whenReady().then(async () => {
   applyDockIcon()
   await createWindow()
   createTray()
-  scheduleNext()
+  await startScheduler()
   // 更新状态变化时推给所有窗口（渲染进程只负责展示）
   onUpdateStatus((status) => {
     for (const win of BrowserWindow.getAllWindows()) {
@@ -1738,7 +1767,7 @@ app.whenReady().then(async () => {
     log: (message) => store.log('info', '会话保活', message),
     // 上次恢复失败的账号，后台隔一段时间再试一次：多数是瞬时抖动 / 限流 / 风控，
     // 重试一次就通了，用户不必自己想起来去点「重新授权」
-    recover: async (accountId) => {
+    recover: (accountId) => withPartitionLock(`account-operation:${accountId}`, async () => {
       const hit = siteOf(accountId)
       if (!hit) return { ok: false, error: '账号不存在' }
       const proxy = await currentProxy()
@@ -1759,12 +1788,14 @@ app.whenReady().then(async () => {
         })
         if (!after.ok) return { ok: false, error: after.error }
         await patchAccount(accountId, { lastStatus: after, needsRelogin: false })
+        await syncCheckinReceipt(hit.site, accountId, after)
         return { ok: true }
       }
       if (!snapshot.ok) return { ok: false, error: snapshot.error }
       await patchAccount(accountId, { lastStatus: snapshot, needsRelogin: false })
+      await syncCheckinReceipt(hit.site, accountId, snapshot)
       return { ok: true }
-    }
+    })
   })
 
   app.on('activate', () => {
@@ -1791,6 +1822,7 @@ app.on('window-all-closed', () => {})
 
 app.on('before-quit', () => {
   quitting = true
+  scheduler?.stop()
   // 退出前把最后一次窗口位置落盘，避免拖动后立刻退出丢失
   if (mainWindow && !mainWindow.isDestroyed()) captureWindowBounds(mainWindow)
   windowState.flushSync()

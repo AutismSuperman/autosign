@@ -123,13 +123,16 @@ export async function renewToken(
     } catch (e) {
       deps.log('warn', '续期异常', e instanceof Error ? e.message : String(e))
       return ''
-    } finally {
-      refreshLocks.delete(account.id)
     }
   })()
 
   refreshLocks.set(account.id, task)
-  return task
+  try {
+    return await task
+  } finally {
+    // Also release early returns (valid token / missing cookie) after registering the task.
+    if (refreshLocks.get(account.id) === task) refreshLocks.delete(account.id)
+  }
 }
 
 /** 会话数超限：服务端明确拒绝建新会话，此时重试只会再撞一次。 */

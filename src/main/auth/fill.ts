@@ -19,6 +19,8 @@ export interface FillPayload {
   password?: string
   /** 本次现算的 TOTP 码。 */
   otp?: string
+  skipPassword?: boolean
+  skipOtp?: boolean
 }
 
 /** 注入脚本共用的 DOM 工具。 */
@@ -90,6 +92,7 @@ export function githubLoginScript(payload: FillPayload): string {
 
   // 两步验证页：填码并提交
   if (otp) {
+    if (${payload.skipOtp === true}) return out('already-submitted', true);
     if (!O) return out('need-otp', true, '该账号需要两步验证，但凭据里没有 TOTP 密钥');
     if (!setValue(otp, O)) return out('fill-failed', true, '两步验证输入框不可填');
     await sleep(150);
@@ -122,6 +125,7 @@ export function githubLoginScript(payload: FillPayload): string {
   const pwd = pick('#password,input[name="password"],input[type="password"]');
 
   if (acc && pwd) {
+    if (${payload.skipPassword === true}) return out('already-submitted', false);
     if (captchaPending()) return out('manual', true, '登录页要求人机验证，需要人工完成');
     if (!P) return out('partial', true, '凭据里没有密码，无法自动登录');
     if (!setValue(acc, U) || !setValue(pwd, P)) {
@@ -262,6 +266,7 @@ export function linuxdoLoginScript(payload: FillPayload): string {
   // Discourse 两步验证页
   const otp = pick('#second-factor input,input[name="second_factor"],input[autocomplete="one-time-code"]');
   if (otp) {
+    if (${payload.skipOtp === true}) return out('already-submitted', true);
     if (!O) return out('need-otp', true, '该账号需要两步验证，但凭据里没有 TOTP 密钥');
     setValue(otp, O);
     await sleep(150);
@@ -277,6 +282,7 @@ export function linuxdoLoginScript(payload: FillPayload): string {
   const login = pick('#login-account-name,input[name="login"],input[id="login-account-name"]');
   const pass = pick('#login-account-password,input[name="password"],input[id="login-account-password"]');
   if (login && pass) {
+    if (${payload.skipPassword === true}) return out('already-submitted', false);
     if (!P) return out('partial', true, '凭据里没有密码，无法自动登录');
     setValue(login, U);
     setValue(pass, P);

@@ -19,6 +19,11 @@ import { mkdirSync } from 'node:fs'
 import { build } from 'esbuild'
 
 const require = createRequire(import.meta.url)
+let passwordCalls = 0
+globalThis.__rebuildPasswordLogin = async () => {
+  passwordCalls++
+  return { ok: true, cookie: 'session=test-password-session' }
+}
 
 mkdirSync('.tmp', { recursive: true })
 await build({
@@ -28,7 +33,19 @@ await build({
   format: 'cjs',
   outfile: '.tmp/rebuild-session.cjs',
   external: ['electron'],
-  logLevel: 'error'
+  logLevel: 'error',
+  plugins: [{
+    name: 'fake-password-login',
+    setup(build) {
+      build.onResolve({ filter: /\/auth\/passwordLogin$/ }, () => ({
+        path: 'password-login', namespace: 'test'
+      }))
+      build.onLoad({ filter: /.*/, namespace: 'test' }, () => ({
+        contents: 'export const passwordLogin = globalThis.__rebuildPasswordLogin',
+        loader: 'js'
+      }))
+    }
+  }]
 })
 
 const { rebuildSession, reloginCapability } = require('../.tmp/rebuild-session.cjs')
@@ -166,9 +183,9 @@ function setup({ account, credential, silent, password }) {
   }
   const credential = { id: 'cred-pw', provider: 'password', username: 'demo-user-6', password: 'pw' }
   const { deps, calls } = setup({ account, credential })
-  // 这里只验证路由：密码分支会真的去发网络请求，因此直接断言没走 OAuth
-  await rebuildSession(site, account, deps).catch(() => {})
+  const result = await rebuildSession(site, account, deps)
   check('密码账号不走静默重授权', calls.silent.length === 0, `calls=${calls.silent.length}`)
+  check('密码账号调用密码登录并返回会话', passwordCalls === 1 && result.ok === true)
 }
 
 const failed = results.filter((r) => !r.ok)

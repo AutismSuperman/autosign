@@ -37,6 +37,9 @@ jobs:
       - name: 类型检查
         run: npm run typecheck
 
+      - name: 发布说明检查
+        run: npm run check:notes
+
       - name: 单元测试
         run: npm test 2>&1 | tee test-output.log
 
@@ -68,6 +71,9 @@ jobs:
 
       - name: 界面验证
         run: xvfb-run --auto-servernum npm run verify:ui 2>&1 | tee verify-output.log
+
+      - name: 授权与定时签到回归
+        run: xvfb-run --auto-servernum sh -c 'npm run verify:oauth && npm run verify:schedule'
 
       - name: 界面验证失败时保留输出
         if: failure()

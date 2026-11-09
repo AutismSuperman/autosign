@@ -33,6 +33,7 @@ mkdirSync(userData, { recursive: true })
 const now = Date.now()
 const offset = 8 * 3_600_000
 const day = 86_400_000
+const todayAt = Math.max(now - 3_600_000, Math.floor((now + offset) / day) * day - offset)
 const today = new Date(Math.floor((now + offset) / day) * day).toISOString().slice(0, 10)
 const yesterday = new Date(Math.floor((now + offset) / day) * day - day).toISOString().slice(0, 10)
 
@@ -58,7 +59,7 @@ const demoConfig = {
       accounts: [
         // 1) 历史回执：余额增量，必须不显示金额
         account('r1', 'demo-delta-account', {
-          at: now - 3_600_000,
+          at: todayAt,
           date: today,
           ok: true,
           already: false,
@@ -68,7 +69,7 @@ const demoConfig = {
         }),
         // 2) 站点给的金额：正常显示 +$25
         account('r2', 'demo-site-reward', {
-          at: now - 3_600_000,
+          at: todayAt,
           date: today,
           ok: true,
           already: true,
@@ -78,7 +79,7 @@ const demoConfig = {
         }),
         // 3) 离谱金额（单位取错的典型值）：不显示
         account('r3', 'demo-bad-amount', {
-          at: now - 3_600_000,
+          at: todayAt,
           date: today,
           ok: true,
           already: false,
@@ -88,7 +89,7 @@ const demoConfig = {
         }),
         // 4) 昨天的回执：跨天后不算今日已签
         account('r4', 'demo-stale-account', {
-          at: now - day - 3_600_000,
+          at: todayAt - day,
           date: yesterday,
           ok: true,
           already: false,
