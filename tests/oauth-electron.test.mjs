@@ -6,7 +6,10 @@ import { electronPath } from '../scripts/electron-path.mjs'
 
 mkdirSync('.tmp', { recursive: true })
 await build({
-  entryPoints: ['src/main/sites/silentReauth.ts'],
+  stdin: {
+    contents: "export { silentReauth } from './src/main/sites/silentReauth'; export { runOAuth } from './src/main/sites/oauth'; export { createAuthWindow } from './src/main/authWindow'",
+    resolveDir: process.cwd()
+  },
   bundle: true,
   platform: 'node',
   format: 'cjs',

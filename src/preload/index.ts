@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import './chrome'
 import { IPC } from '../shared/ipc'
 import type { ZcodeApi } from '../shared/ipc'
 import type { ProxySettings, Settings, Site } from '../shared/types'

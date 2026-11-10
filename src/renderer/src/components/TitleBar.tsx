@@ -1,4 +1,5 @@
 import iconUrl from '../../../../resources/brand.png'
+import { WindowControls } from './WindowControls'
 
 interface Props {
   collapsed: boolean
@@ -9,8 +10,7 @@ interface Props {
 
 /**
  * 自绘标题条（magpie 风格）：品牌行顶到窗口最上沿，与侧栏同宽同底色，
- * 中间整条是窗口拖拽区；最小化/最大化/关闭由系统提供
- * （Windows 窗口控制覆叠 / macOS 红绿灯），不自绘按钮。
+ * 中间整条是窗口拖拽区；窗口控制与应用使用同一套主题。
  *
  * 副标题不再写死宣传语，改为版本号：一眼知道当前跑的是哪个版本，
  * 后台发现新版本时追加 new 徽标。
@@ -29,6 +29,7 @@ export function TitleBar(props: Props): React.JSX.Element {
         </div>
       </div>
       <div className="titlebar-drag" />
+      <WindowControls />
     </div>
   )
 }

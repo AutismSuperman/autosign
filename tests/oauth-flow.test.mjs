@@ -16,6 +16,8 @@ class TestWindow extends EventEmitter {
     this.visible = false
     this.url = ''
     this.webContents = new EventEmitter()
+    this.webContents.isDestroyed = () => this.destroyed
+    this.webContents.loadURL = (url) => this.loadURL(url)
     this.webContents.getURL = () => this.url
     this.webContents.executeJavaScript = async (script) => {
       if (script.includes('not-authorize')) return JSON.stringify({ step: 'not-authorize', done: true })
@@ -117,6 +119,14 @@ await build({
   plugins: [{
     name: 'test-electron',
     setup(build) {
+      build.onResolve({ filter: /\/authWindow$/ }, () => ({ path: 'auth-window', namespace: 'window-test' }))
+      build.onLoad({ filter: /.*/, namespace: 'window-test' }, () => ({
+        contents: `export function createAuthWindow(ses, title, silent) {
+          const win = new globalThis.__oauthTestElectron.BrowserWindow({ show: false })
+          return {win, web: win.webContents}
+        }`,
+        loader: 'js'
+      }))
       build.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'test' }))
       build.onLoad({ filter: /.*/, namespace: 'test' }, () => ({
         contents: 'module.exports = globalThis.__oauthTestElectron', loader: 'js'

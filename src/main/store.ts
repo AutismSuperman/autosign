@@ -58,6 +58,7 @@ function defaultSettings(): Settings {
   return {
     proxy: { mode: 'system', url: '' },
     schedule: { enabled: false, time: '08:05', weekdaysOnly: false },
+    closeAction: 'background',
     sidebarCollapsed: false,
     hideHiddenSites: true,
     theme: 'dark',
@@ -184,7 +185,10 @@ export class ConfigStore {
       version: stored.version ?? CONFIG_VERSION,
       sites,
       credentials,
-      settings: { ...defaultSettings(), ...(stored.settings ?? {}) }
+      settings: {
+        ...defaultSettings(), ...(stored.settings ?? {}),
+        closeAction: stored.settings?.closeAction === 'quit' ? 'quit' : 'background'
+      }
     }
   }
 
@@ -300,6 +304,15 @@ export class ConfigStore {
       await fs.rename(tmp, this.configFile)
     })
     return this.writeQueue
+  }
+
+  /** Drain queued writes before an explicit exit. */
+  async flush(): Promise<void> {
+    let pending: Promise<void>
+    do {
+      pending = this.writeQueue
+      await pending
+    } while (pending !== this.writeQueue)
   }
 
   // ---------- 日志 ----------

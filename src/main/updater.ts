@@ -1,4 +1,4 @@
-import { app, dialog, Notification, shell } from 'electron'
+import { app, shell } from 'electron'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { autoUpdater } from 'electron-updater'
@@ -12,7 +12,6 @@ import {
   requiresManualInstall,
   resolveAssetUrl
 } from './updatePolicy'
-import { NotifyStateStore } from './notifyState'
 
 /**
  * 应用更新。
@@ -31,8 +30,8 @@ import { NotifyStateStore } from './notifyState'
  * 设计取舍：
  *   - 默认「自动下载、装到下次退出」：用户不必盯着进度条，
  *     也不会在签到进行中突然重启；
- *   - 用户主动点「检查更新」时，下载完成后询问是否立刻重启安装；
- *   - 后台定时检查只提示「已就绪」，把重启决定权留给用户；
+ *   - 检查与下载结果只更新页面状态，不弹系统通知或原生对话框；
+ *   - 用户在设置页选择重启安装，使用应用内确认框；
  *   - 开发模式与未打包版本直接跳过——没有 app-update.yml，检查必然失败。
  */
 
@@ -42,14 +41,10 @@ type Listener = (status: UpdateStatus) => void
 
 let current: UpdateStatus = { state: 'idle' }
 const listeners = new Set<Listener>()
-/** 是否由用户手动触发：决定下载完成后要不要弹「立即重启」。 */
-let interactive = false
 let initialized = false
 /** macOS 是否能用应用内安装（需要 Developer ID 签名）。null 表示尚未检测。 */
 let inAppInstallable: boolean | null = null
 let signingProbe: Promise<boolean> | null = null
-/** 记录哪些版本已经主动提示过，保证同一版本只打扰一次。 */
-let notifyState: NotifyStateStore | null = null
 
 function emit(status: UpdateStatus): void {
   current = status
@@ -141,9 +136,8 @@ function manualUrlFor(info: UpdateInfo): string {
 /**
  * 手动或自动触发一次检查。
  *
- * @param fromUser 用户主动点的（界面会给出可见反馈）
  */
-export async function checkForUpdates(fromUser = false): Promise<UpdateStatus> {
+export async function checkForUpdates(): Promise<UpdateStatus> {
   if (!updaterAvailable()) {
     const status: UpdateStatus = {
       state: 'error',
@@ -154,7 +148,6 @@ export async function checkForUpdates(fromUser = false): Promise<UpdateStatus> {
   }
   if (current.state === 'checking' || current.state === 'downloading') return current
 
-  interactive = fromUser
   emit({ state: 'checking' })
   try {
     // 签名探测必须先于检查完成：否则 autoDownload 还是 true，
@@ -192,32 +185,6 @@ export function openDownloadPage(): void {
 }
 
 /**
- * 后台检查发现新版本时主动提示一次。
- *
- * 用系统通知而不是模态框：这个应用多数时间在托盘里，
- * 模态框会抢焦点打断正在做的事，而通知点一下就能去下载。
- * 同一版本只提示一次，之后再检查到只在设置页更新状态。
- */
-async function notifyOnce(version: string): Promise<void> {
-  if (notifyState) {
-    await notifyState.load()
-    if (!notifyState.shouldNotify(version)) return
-    // 先落盘再弹：宁可少提示一次，也不要在通知中心堆一串重复条目
-    await notifyState.markNotified(version)
-  }
-  if (!Notification.isSupported()) return
-  const n = new Notification({
-    title: 'AutoSign 有新版本',
-    body: `v${version} 已发布。点击下载安装包，覆盖安装后账号与配置都会保留。`
-  })
-  n.on('click', () => {
-    // 后台检查时不抢焦点，用户点通知才把窗口带到前台
-    openDownloadPage()
-  })
-  n.show()
-}
-
-/**
  * 初始化事件监听。只在主进程启动时调用一次。
  *
  * 自动检查放在启动后一段时间，避免和窗口加载、首轮额度刷新抢带宽。
@@ -225,9 +192,6 @@ async function notifyOnce(version: string): Promise<void> {
 export function initUpdater(): void {
   if (initialized || !updaterAvailable()) return
   initialized = true
-
-  notifyState = new NotifyStateStore(`${app.getPath('userData')}/update-notify.json`)
-  void notifyState.load()
 
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
@@ -242,23 +206,6 @@ export function initUpdater(): void {
       if (!installable) {
         const url = manualUrlFor(info)
         emit({ state: 'manual', version: info.version, url })
-        if (interactive) {
-          interactive = false
-          const r = await dialog.showMessageBox({
-            type: 'info',
-            title: '发现新版本',
-            message: `v${info.version} 已发布。`,
-            detail:
-              '当前安装的版本不是用 Apple 开发者证书签名的，系统不允许应用内直接安装更新。' +
-              '请下载安装包后覆盖安装，账号与配置会保留。',
-            buttons: ['下载安装包', '稍后'],
-            defaultId: 0,
-            cancelId: 1
-          })
-          if (r.response === 0) openDownloadPage()
-        } else {
-          await notifyOnce(info.version)
-        }
         return
       }
       emit({ state: 'available', version: info.version })
@@ -267,15 +214,6 @@ export function initUpdater(): void {
 
   autoUpdater.on('update-not-available', () => {
     emit({ state: 'none' })
-    if (interactive) {
-      void dialog.showMessageBox({
-        type: 'info',
-        title: '已是最新版本',
-        message: `当前版本 v${appVersion()} 已是最新。`,
-        buttons: ['好']
-      })
-    }
-    interactive = false
   })
 
   autoUpdater.on('download-progress', (p) => {
@@ -289,28 +227,6 @@ export function initUpdater(): void {
 
   autoUpdater.on('update-downloaded', (info) => {
     emit({ state: 'ready', version: info.version })
-    if (Notification.isSupported()) {
-      new Notification({
-        title: '更新已下载',
-        body: `v${info.version} 已就绪，退出应用后会自动安装。`
-      }).show()
-    }
-    if (interactive) {
-      interactive = false
-      void dialog
-        .showMessageBox({
-          type: 'info',
-          title: '更新已就绪',
-          message: `v${info.version} 已下载完成。`,
-          detail: '可以现在重启安装，也可以稍后退出应用时自动安装。',
-          buttons: ['立即重启', '稍后'],
-          defaultId: 0,
-          cancelId: 1
-        })
-        .then((r) => {
-          if (r.response === 0) quitAndInstall()
-        })
-    }
   })
 
   autoUpdater.on('error', (err) => {
@@ -322,23 +238,9 @@ export function initUpdater(): void {
       // 这时给出下载页比只报一句错更有用
       manualUrl: releasePageUrl()
     })
-    if (interactive) {
-      interactive = false
-      void dialog.showMessageBox({
-        type: 'error',
-        title: '检查更新失败',
-        message,
-        detail: '可以稍后重试，或到下面的项目 Release 页手动下载安装包覆盖安装。',
-        buttons: ['打开下载页', '好'],
-        defaultId: 0,
-        cancelId: 1
-      }).then((r) => {
-        if (r.response === 0) openDownloadPage()
-      })
-    }
   })
 
   // 启动后 30 秒检查一次，之后每 6 小时一次
-  setTimeout(() => void checkForUpdates(false), 30_000)
-  setInterval(() => void checkForUpdates(false), 6 * 3_600_000)
+  setTimeout(() => void checkForUpdates(), 30_000).unref()
+  setInterval(() => void checkForUpdates(), 6 * 3_600_000).unref()
 }

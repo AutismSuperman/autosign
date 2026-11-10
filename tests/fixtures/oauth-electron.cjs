@@ -1,12 +1,14 @@
 const assert = require('node:assert/strict')
 const http = require('node:http')
+const { writeFileSync } = require('node:fs')
 const { join } = require('node:path')
-const { app, BrowserWindow, session } = require('electron')
+const { app, BrowserWindow, session, nativeTheme } = require('electron')
 
 app.setPath('userData', join(process.cwd(), '.tmp', `oauth-electron-data-${process.pid}`))
+app.setAppPath(process.cwd())
 app.on('window-all-closed', () => {})
 app.disableHardwareAcceleration()
-const { silentReauth } = require('../../.tmp/oauth-electron.cjs')
+const { silentReauth, runOAuth, createAuthWindow } = require('../../.tmp/oauth-electron.cjs')
 
 let scenario
 const server = http.createServer((req, res) => {
@@ -27,6 +29,10 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/provider') {
     res.writeHead(302, { Location: `${scenario.path}?code=test-code&state=test-state` })
     return res.end()
+  }
+  if (url.pathname === '/login-demo') {
+    res.writeHead(200, { 'Content-Type': 'text/html' })
+    return res.end('<html><body><h1>Demo authorization</h1></body></html>')
   }
   if (url.pathname === '/api/oauth/github') {
     scenario.exchanges++
@@ -65,9 +71,14 @@ async function main() {
   await ses.cookies.set({
     url: 'https://github.com/', name: 'user_session', value: 'test-provider-session', secure: true
   })
-  for (const path of ['/oauth/github', '/api/oauth/github']) {
+  for (const { path, silent } of [
+    { path: '/oauth/github', silent: true }, { path: '/api/oauth/github', silent: true },
+    { path: '/oauth/github', silent: false }, { path: '/api/oauth/github', silent: false }
+  ]) {
     scenario = { path, exchanges: 0, pageLoads: 0 }
-    const result = await silentReauth(site, account, 'github', { proxy: '', timeoutMs: 5000 })
+    const result = silent
+      ? await silentReauth(site, account, 'github', { proxy: '', timeoutMs: 5000 })
+      : await runOAuth(site, account.id, 'github', '', undefined, { timeoutMs: 5000 })
     assert.equal(result.ok, true, result.error)
     assert.equal(result.token, 'test-access-token')
     assert.equal(result.siteUserId, 'test-user')
@@ -75,9 +86,37 @@ async function main() {
     assert.equal(scenario.exchanges, 1)
     assert.equal(scenario.pageLoads, 0)
     assert.equal(BrowserWindow.getAllWindows().length, 0)
-    console.log(`PASS  real Electron ${path}: one exchange, shared cookies, hidden window cleaned up`)
+    console.log(`PASS  real Electron ${path} (${silent ? 'silent' : 'custom window'}): single exchange and cleanup`)
   }
-  assert.equal(providerRequests, 2)
+  assert.equal(providerRequests, 4)
+
+  const { win, web } = createAuthWindow(ses, 'Demo authorization', false)
+  await web.loadURL(`${baseUrl}/login-demo`)
+  for (let i = 0; i < 100; i++) {
+    if (await win.webContents.executeJavaScript("!!document.querySelector('.window-controls')").catch(() => false)) break
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  assert.equal(await win.webContents.executeJavaScript("document.querySelectorAll('.window-control').length"), 3)
+  assert.equal(await win.webContents.executeJavaScript('typeof window.api'), 'undefined')
+  assert.equal(await web.executeJavaScript('typeof window.windowControls'), 'undefined')
+  assert.equal(await web.executeJavaScript('typeof window.api'), 'undefined')
+  const view = win.contentView.children.find(child => child.webContents === web)
+  assert.equal(view.getBounds().y, 44)
+  nativeTheme.themeSource = 'light'
+  for (let i = 0; i < 50; i++) {
+    if (await win.webContents.executeJavaScript("document.documentElement.dataset.theme") === 'light') break
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  assert.equal(await win.webContents.executeJavaScript("document.documentElement.dataset.theme"), 'light')
+  win.show()
+  await new Promise(resolve => setTimeout(resolve, 400))
+  writeFileSync(join(process.cwd(), '.tmp/auth-window-light.png'), (await win.capturePage()).toPNG())
+  writeFileSync(join(process.cwd(), '.tmp/auth-page.png'), (await web.capturePage()).toPNG())
+  const destroyed = new Promise(resolve => web.once('destroyed', resolve))
+  win.close()
+  await destroyed
+  assert.equal(BrowserWindow.getAllWindows().length, 0)
+  console.log('PASS  authorization shell: themed controls, isolated page, view cleanup on close')
 }
 main().then(
   () => { server.close(); app.exit(0) },

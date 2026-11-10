@@ -1,4 +1,4 @@
-import { BrowserWindow, session } from 'electron'
+import { session } from 'electron'
 import { randomBytes } from 'node:crypto'
 import type { Session } from 'electron'
 import type { AuthProvider, Credential, Site } from '../../shared/types'
@@ -10,8 +10,9 @@ import {
 } from '../auth/fill'
 import { totp } from '../auth/totp'
 import { accountPartition } from './partition'
-import { safeCurrentUrl, withHiddenWindow } from './hiddenWindow'
+import { withHiddenWindow } from './hiddenWindow'
 import { withPartitionLock } from './partitionLock'
+import { createAuthWindow } from '../authWindow'
 
 /**
  * OAuth 授权窗口。
@@ -223,21 +224,7 @@ async function runOAuthInPartition(
   const AUTO_TIMEOUT_MS = 60_000
   const HUMAN_TIMEOUT_MS = 10 * 60_000
 
-  const win = new BrowserWindow({
-    width: 1000,
-    height: 780,
-    show: false,
-    skipTaskbar: options.silent === true,
-    title: `登录 ${site.name}`,
-    autoHideMenuBar: true,
-    webPreferences: {
-      session: ses,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      backgroundThrottling: false
-    }
-  })
+  const { win, web } = createAuthWindow(ses, `登录 ${site.name}`, options.silent === true)
   const exchangeAbort = new AbortController()
   win.once('closed', () => exchangeAbort.abort())
 
@@ -302,7 +289,7 @@ async function runOAuthInPartition(
        */
       const fillPage = async (): Promise<void> => {
         if (aborted() || handedToHuman || callbackStarted) return
-        const url = safeCurrentUrl(win)
+        const url = web.isDestroyed() ? '' : web.getURL()
         if (!url || /^\w+:\/\/$/.test(url)) return
         if (url === lastFillUrl && fillAttempts >= 4) return
         if (url !== lastFillUrl) {
@@ -326,7 +313,7 @@ async function runOAuthInPartition(
 
           // 授权确认页优先：已登录时根本不会出现登录表单
           const authorizeScript = prov === 'linuxdo' ? linuxdoApproveScript() : githubAuthorizeScript()
-          const authRaw = await win.webContents.executeJavaScript(authorizeScript, true)
+          const authRaw = await web.executeJavaScript(authorizeScript, true)
           const authState =
             typeof authRaw === 'string'
               ? (JSON.parse(authRaw) as { step?: string; done?: boolean; msg?: string })
@@ -349,7 +336,7 @@ async function runOAuthInPartition(
           }
 
           const script = prov === 'linuxdo' ? linuxdoLoginScript(payload) : githubLoginScript(payload)
-          const raw = await win.webContents.executeJavaScript(script, true)
+          const raw = await web.executeJavaScript(script, true)
           const state =
             typeof raw === 'string'
               ? (JSON.parse(raw) as { step?: string; done?: boolean; msg?: string })
@@ -437,15 +424,15 @@ async function runOAuthInPartition(
       }
 
       // 页面加载完成后尝试预填（Spa 会多次导航，用去重避免重复提交）
-      win.webContents.on('did-finish-load', () => {
+      web.on('did-finish-load', () => {
         void tryAutofill()
       })
 
-      win.webContents.on('will-redirect', (event, url, _isInPlace, isMainFrame) => {
+      web.on('will-redirect', (event, url, _isInPlace, isMainFrame) => {
         if (isMainFrame) interceptCallback(event, url)
       })
-      win.webContents.on('will-navigate', interceptCallback)
-      win.webContents.on('did-navigate', (_e, url) => {
+      web.on('will-navigate', interceptCallback)
+      web.on('did-navigate', (_e, url) => {
         if (isCallback(url)) void handleCallback(url)
       })
 
@@ -468,7 +455,7 @@ async function runOAuthInPartition(
 
       // 加载失败要如实上报（代理挂、DNS 不通），不能被兜底成「超时」
       try {
-        await win.loadURL(providerAuthorizeUrl(prov, seed.clientId, expectedState))
+        await web.loadURL(providerAuthorizeUrl(prov, seed.clientId, expectedState))
       } catch (e) {
         // Cancelling the callback navigation can reject loadURL with ERR_ABORTED.
         if (!callbackStarted) {

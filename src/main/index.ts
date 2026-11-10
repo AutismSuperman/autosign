@@ -6,7 +6,6 @@ import {
   nativeImage,
   nativeTheme,
   net,
-  Notification,
   powerMonitor,
   screen,
   shell,
@@ -70,6 +69,7 @@ import { CheckinScheduler, scheduleTimeOf } from './scheduler'
 import { ScheduleStateStore } from './scheduleState'
 import { createSingleFlight } from './singleFlight'
 import { withPartitionLock } from './sites/partitionLock'
+import { attachWindowChrome } from './windowChrome'
 
 /**
  * 必须在读取任何 app 路径之前设置应用名。
@@ -101,10 +101,9 @@ const store = new ConfigStore()
 const windowState = new WindowStateStore()
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
-/** 只有托盘菜单的「退出」（或系统退出流程）才允许真正关闭窗口。 */
+/** Explicit quit and update installation bypass the close preference. */
 let quitting = false
-/** 「已最小化到托盘」的提示每次运行只弹一次。 */
-let trayHintShown = false
+let quitRequested = false
 let scheduler: CheckinScheduler | undefined
 const checkinFlight = createSingleFlight<CheckinResultDto>()
 
@@ -140,28 +139,11 @@ function installProcessGuards(): void {
 /** 界面主题同步到原生层：滚动条、菜单等原生控件跟随深浅色。 */
 function applyNativeTheme(): void {
   nativeTheme.themeSource = store.getSettings().theme ?? 'dark'
-  applyTitleBarOverlay()
 }
 
 /** 窗口初始背景色与主题一致，避免启动瞬间闪色。 */
 function windowBackgroundColor(): string {
   return nativeTheme.shouldUseDarkColors ? '#1a1a1e' : '#f4f4f6'
-}
-
-/** Windows 窗口控制覆叠配色：与标题条同底，符号色跟随主题文字。 */
-function titleBarOverlay(): { color: string; symbolColor: string; height: number } {
-  const dark = nativeTheme.shouldUseDarkColors
-  return {
-    color: dark ? '#1a1a1e' : '#f4f4f6',
-    symbolColor: dark ? '#b9b9c1' : '#4b4b53',
-    height: 44
-  }
-}
-
-/** 主题变化时同步覆叠配色，否则亮色主题下右上角会剩一块深色底。 */
-function applyTitleBarOverlay(): void {
-  if (process.platform !== 'win32') return
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitleBarOverlay(titleBarOverlay())
 }
 
 function showMainWindow(): void {
@@ -172,6 +154,18 @@ function showMainWindow(): void {
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
   mainWindow.focus()
+}
+
+async function quitApplication(): Promise<void> {
+  if (quitRequested) return
+  quitRequested = true
+  scheduler?.stop()
+  try {
+    await store.flush()
+    await windowState.flush()
+  } finally {
+    app.quit()
+  }
 }
 
 async function currentProxy(): Promise<string> {
@@ -852,12 +846,7 @@ function updateTrayMenu(): void {
           void (async () => {
             const results = await runCheckinAll()
             const ok = results.filter((r) => r.ok).length
-            if (Notification.isSupported()) {
-              new Notification({
-                title: '签到完成',
-                body: `成功 ${ok} / ${results.length}（详见运行日志）`
-              }).show()
-            }
+            store.log(ok === results.length ? 'ok' : 'warn', '托盘签到', `成功 ${ok} / ${results.length}`)
           })()
         }
       },
@@ -865,8 +854,7 @@ function updateTrayMenu(): void {
       {
         label: '退出',
         click: () => {
-          quitting = true
-          app.quit()
+          void quitApplication()
         }
       }
     ])
@@ -957,6 +945,9 @@ function registerIpc(): void {
   ipcMain.handle(IPC.configGet, () => store.get())
 
   ipcMain.handle(IPC.settingsUpdate, async (_e, patch: Partial<Settings>) => {
+    if (patch.closeAction !== undefined && !['background', 'quit'].includes(patch.closeAction)) {
+      throw new Error('关闭窗口设置无效')
+    }
     if (patch.schedule && (
       typeof patch.schedule.enabled !== 'boolean' ||
       typeof patch.schedule.weekdaysOnly !== 'boolean' ||
@@ -1451,7 +1442,7 @@ function registerIpc(): void {
   }))
 
   ipcMain.handle(IPC.updateStatus, () => getUpdateStatus())
-  ipcMain.handle(IPC.updateCheck, () => checkForUpdates(true))
+  ipcMain.handle(IPC.updateCheck, () => checkForUpdates())
   ipcMain.handle(IPC.updateInstall, () => {
     quitAndInstall()
   })
@@ -1479,11 +1470,8 @@ async function startScheduler(): Promise<void> {
     online: () => net.isOnline(),
     log: (level, message, accountId) => store.log(level, '调度', message, { accountId }),
     notify: ({ succeeded, retrying, stopped }) => {
-      if (!Notification.isSupported()) return
-      new Notification({
-        title: retrying || stopped ? '自动签到有未完成项' : '自动签到完成',
-        body: `本轮成功 ${succeeded} 项，等待重试 ${retrying} 项，需处理 ${stopped} 项（详见运行日志）`
-      }).show()
+      store.log(retrying || stopped ? 'warn' : 'ok', '调度',
+        `本轮成功 ${succeeded} 项，等待重试 ${retrying} 项，需处理 ${stopped} 项`)
     }
   }, await stateStore.read())
   scheduler.start()
@@ -1653,14 +1641,7 @@ async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     x: bounds.x,
     y: bounds.y,
-    // 隐藏原生标题栏（magpie 风格）：渲染进程自绘标题条承担拖拽与品牌展示，
-    // 最小化/最大化/关闭用系统控件 —— Windows 为窗口控制覆叠，macOS 为红绿灯。
-    // Linux 不支持隐藏标题栏，保留原生框。
-    ...(process.platform === 'win32'
-      ? { titleBarStyle: 'hidden' as const, titleBarOverlay: titleBarOverlay() }
-      : process.platform === 'darwin'
-        ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 14 } }
-        : {}),
+    frame: false,
     width: bounds.width,
     height: bounds.height,
     minWidth: 1040,
@@ -1679,6 +1660,7 @@ async function createWindow(): Promise<void> {
       sandbox: false
     }
   })
+  attachWindowChrome(mainWindow, 'AutoSign')
 
   // 记住未被最大化时最后一次的普通尺寸，供 captureWindowBounds 使用
   windowState.lastNormal = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
@@ -1695,24 +1677,17 @@ async function createWindow(): Promise<void> {
   if (bounds.maximized) mainWindow.maximize()
 
   mainWindow.once('ready-to-show', () => mainWindow?.show())
-  applyTitleBarOverlay()
 
-  // 关窗最小化到托盘：定时签到依赖主进程存活，直接退出会让「关闭窗口后仍会按时运行」落空
   mainWindow.on('close', (e) => {
     if (quitting) return
     e.preventDefault()
     if (mainWindow) captureWindowBounds(mainWindow)
+    if (store.getSettings().closeAction === 'quit' || !tray) {
+      void quitApplication()
+      return
+    }
     void windowState.flush()
     mainWindow?.hide()
-    if (!trayHintShown) {
-      trayHintShown = true
-      if (Notification.isSupported()) {
-        new Notification({
-          title: 'AutoSign 已最小化到托盘',
-          body: '定时签到会继续在后台运行；托盘图标右键可恢复窗口或退出。'
-        }).show()
-      }
-    }
   })
 
   mainWindow.on('closed', () => {

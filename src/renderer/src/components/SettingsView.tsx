@@ -15,6 +15,7 @@ import {
   Network,
   Palette,
   PanelLeft,
+  Power,
   RefreshCw,
   RotateCw,
   Settings2,
@@ -28,6 +29,7 @@ import type { SelectOption } from './Select'
 import { Seg } from './Seg'
 import type { ToastKind } from './Toast'
 import { copyText } from '../lib/clipboard'
+import { useConfirm } from './ConfirmDialog'
 
 interface Props {
   settings: Settings
@@ -60,6 +62,36 @@ export function SettingsView(props: Props): React.JSX.Element {
   )
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [update, setUpdate] = useState<UpdateStatus>({ state: 'idle' })
+  const [scheduleTime, setScheduleTime] = useState(settings.schedule.time)
+  const { confirm, dialog } = useConfirm()
+  useEffect(() => setScheduleTime(settings.schedule.time), [settings.schedule.time])
+  const validScheduleTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(scheduleTime)
+  // A checkbox click can follow blur before the saved configuration returns.
+  const scheduleWithDraftTime = {
+    ...settings.schedule, time: validScheduleTime ? scheduleTime : settings.schedule.time
+  }
+
+  const saveTime = async (): Promise<void> => {
+    if (scheduleTime === settings.schedule.time) return
+    if (!validScheduleTime) {
+      props.onToast('请输入有效时间，例如 08:05', 'error')
+      setScheduleTime(settings.schedule.time)
+      return
+    }
+    await props.onChange({ schedule: { ...settings.schedule, time: scheduleTime } })
+  }
+  const installUpdate = async (): Promise<void> => {
+    if (!await confirm({
+      title: '重启并安装更新？',
+      message: '正在进行的任务会中断。账号和设置会保留。',
+      confirmLabel: '重启安装'
+    })) return
+    try {
+      await window.api.update.install()
+    } catch {
+      props.onToast('安装未能启动，请稍后重试', 'error')
+    }
+  }
 
   useEffect(() => {
     void window.api.app.secureInfo().then(setSecure)
@@ -199,7 +231,7 @@ export function SettingsView(props: Props): React.JSX.Element {
                   checked={settings.schedule.enabled}
                   onChange={(e) =>
                     void props.onChange({
-                      schedule: { ...settings.schedule, enabled: e.target.checked }
+                      schedule: { ...scheduleWithDraftTime, enabled: e.target.checked }
                     })
                   }
                 />
@@ -214,18 +246,20 @@ export function SettingsView(props: Props): React.JSX.Element {
             <div className="field-text">
               <div className="field-label">执行时间</div>
               <span className="field-hint">
-                建议设为 08:05 之后：多数站点的奖励周期在北京时间 08:00 切换。
+                使用电脑本地时间；AnyRouter 会等待北京时间 08:00 的领取窗口。
               </span>
             </div>
             <div className="field-body">
               <input
-                type="time"
-                value={settings.schedule.time}
-                onChange={(e) =>
-                  void props.onChange({
-                    schedule: { ...settings.schedule, time: e.target.value }
-                  })
-                }
+                type="text"
+                className="schedule-time"
+                aria-label="执行时间"
+                placeholder="08:05"
+                maxLength={5}
+                value={scheduleTime}
+                onChange={(e) => setScheduleTime(e.target.value)}
+                onBlur={() => void saveTime()}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
               />
               <label className="check-label">
                 <input
@@ -233,7 +267,7 @@ export function SettingsView(props: Props): React.JSX.Element {
                   checked={settings.schedule.weekdaysOnly}
                   onChange={(e) =>
                     void props.onChange({
-                      schedule: { ...settings.schedule, weekdaysOnly: e.target.checked }
+                      schedule: { ...scheduleWithDraftTime, weekdaysOnly: e.target.checked }
                     })
                   }
                 />
@@ -327,15 +361,21 @@ export function SettingsView(props: Props): React.JSX.Element {
             <div className="field-text">
               <div className="field-label">关闭窗口</div>
               <span className="field-hint">
-                点击窗口关闭按钮后应用会收进托盘，定时签到继续在后台运行；
-                在托盘图标上右键选择「退出」才会真正结束应用。
+                {settings.closeAction === 'quit'
+                  ? '关闭后结束应用，定时签到停止。'
+                  : '关闭后收进托盘，定时签到继续运行。'}
               </span>
             </div>
             <div className="field-body">
-              <span className="field-static">
-                <Minimize2 size={14} />
-                最小化到系统托盘
-              </span>
+              <Seg
+                value={settings.closeAction}
+                items={[
+                  { key: 'background', label: '后台运行', icon: Minimize2 },
+                  { key: 'quit', label: '直接退出', icon: Power }
+                ]}
+                onChange={(closeAction) => void props.onChange({ closeAction })}
+                ariaLabel="关闭窗口时"
+              />
             </div>
           </div>
         </div>
@@ -424,7 +464,7 @@ export function SettingsView(props: Props): React.JSX.Element {
                 {update.state === 'checking' ? '检查中…' : '检查更新'}
               </button>
               {update.state === 'ready' && (
-                <button className="btn small primary" onClick={() => void window.api.update.install()}>
+                <button className="btn small primary" onClick={() => void installUpdate()}>
                   <RotateCw size={13} />
                   重启安装
                 </button>
@@ -464,6 +504,7 @@ export function SettingsView(props: Props): React.JSX.Element {
           </div>
         </div>
       </div>
+      {dialog}
     </>
   )
 }

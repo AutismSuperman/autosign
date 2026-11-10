@@ -261,7 +261,7 @@ html.theme-switching *::after {
   min-height: 0;
 }
 
-/* 自绘标题条：品牌行 + 拖拽区；最小化/最大化/关闭由系统覆叠提供 */
+/* Shared local window chrome. */
 .titlebar {
   flex: none;
   height: 44px;
@@ -289,22 +289,82 @@ html.theme-switching *::after {
 
 .titlebar-drag {
   flex: 1;
+  min-width: 0;
 }
 
-/* macOS 红绿灯占位：品牌行让出左侧 */
-html[data-platform='darwin'] .titlebar-brand {
-  width: 268px;
-  flex-basis: 268px;
+.window-controls {
+  display: flex;
+  flex: none;
+  -webkit-app-region: no-drag;
 }
 
-html[data-platform='darwin'] .titlebar-brand .brand {
-  padding-left: 78px;
+.window-control {
+  width: 46px;
+  height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  color: var(--text-dim);
+  background: transparent;
+  cursor: pointer;
 }
 
-html[data-platform='darwin'] .titlebar-brand.collapsed,
-html[data-platform='darwin'] .sidebar.collapsed {
-  width: 84px;
-  flex-basis: 84px;
+.window-control:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.window-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.window-close:hover {
+  background: #c73545;
+  color: #fff;
+}
+
+.auth-frame {
+  height: 100%;
+  background: var(--bg);
+}
+
+.auth-titlebar {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+
+.auth-brand {
+  width: 22px;
+  height: 22px;
+  margin: 0 10px 0 14px;
+}
+
+.auth-title {
+  font-size: 13px;
+  font-weight: 600;
+  max-width: 35%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-origin {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin-left: 16px;
+  max-width: 35%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedule-time {
+  width: 88px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .main {

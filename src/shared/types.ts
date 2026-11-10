@@ -246,6 +246,8 @@ export interface ScheduleSettings {
 export interface Settings {
   proxy: ProxySettings
   schedule: ScheduleSettings
+  /** Close hides to tray by default; quit stops background tasks. */
+  closeAction: 'background' | 'quit'
   /** 侧边栏折叠为图标条。 */
   sidebarCollapsed: boolean
   /** 隐藏站点在侧边栏同时收起（默认 true）。 */

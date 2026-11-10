@@ -207,7 +207,7 @@ export interface ZcodeApi {
     onConfigChanged(listener: () => void): () => void
   }
   update: {
-    /** 手动检查更新；下载完成后会询问是否立即重启。 */
+    /** 手动检查更新；结果在设置页显示。 */
     check(): Promise<UpdateStatus>
     current(): Promise<UpdateStatus>
     /** 重启并安装已下载的更新。 */
