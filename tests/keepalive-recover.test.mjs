@@ -31,7 +31,7 @@ await build({
   logLevel: 'error'
 })
 
-const { startKeepAlive, keepAliveOnce, withPartitionLock } = require('../.tmp/keepalive.cjs')
+const { startKeepAlive, keepAliveOnce, recoverOnce, withPartitionLock } = require('../.tmp/keepalive.cjs')
 
 const results = []
 const check = (name, ok, detail) => {
@@ -200,6 +200,59 @@ function makeDeps(recover) {
   await busy
   await renewal
   check('保活等待结束后读取最新会话', reads === 1)
+}
+
+{
+  let calls = 0
+  const result = await recoverOnce({
+    ...makeDeps(async () => { calls++; return { ok: true } }),
+    sites: () => [{ id: 'test-site', accounts: [{ id: 'test-account', needsRelogin: false }] }]
+  })
+  check('认证已成功的账号不会再次进入后台恢复', calls === 0 && result.total === 0)
+}
+
+{
+  const accounts = [
+    { id: 'test-first', needsRelogin: true },
+    { id: 'test-authorized', needsRelogin: true }
+  ]
+  const calls = []
+  const result = await recoverOnce({
+    ...makeDeps(async () => ({ ok: false })),
+    sites: () => [{ id: 'test-site', accounts }],
+    recover: async (id) => {
+      calls.push(id)
+      accounts[1] = { ...accounts[1], needsRelogin: false }
+      return { ok: false }
+    }
+  })
+  check(
+    '排队期间认证成功的账号会从旧恢复队列跳过',
+    calls.join(',') === 'test-first' && result.total === 1
+  )
+}
+
+{
+  const timers = makeFakeTimers()
+  let calls = 0
+  const account = { id: 'test-account', needsRelogin: true }
+  const stop = startKeepAlive({
+    ...makeDeps(async () => { calls++; return { ok: false } }),
+    sites: () => [{ id: 'test-site', accounts: [account] }]
+  })
+  try {
+    await timers.fireNext()
+    check('认证前恢复失败仍使用快速重试', timers.nextDelay() === FAST_MS)
+    account.needsRelogin = false
+    await timers.fireNext()
+    check(
+      '认证成功清空待恢复队列后退出快速重试',
+      calls === 1 && timers.nextDelay() === NORMAL_MS
+    )
+  } finally {
+    stop()
+    timers.restore()
+  }
 }
 
 const failed = results.filter((r) => !r.ok)

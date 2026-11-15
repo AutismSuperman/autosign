@@ -104,7 +104,14 @@ export async function recoverOnce(
   if (pending.length === 0) return { recovered: 0, total: 0 }
 
   let recovered = 0
+  let total = 0
   for (const { account } of pending) {
+    // Re-read state after each await; another account may have been authorized meanwhile.
+    const stillPending = deps.sites().some((site) =>
+      site.accounts.some((current) => current.id === account.id && current.needsRelogin === true)
+    )
+    if (!stillPending) continue
+    total++
     try {
       const r = await deps.recover(account.id)
       if (r.ok) recovered++
@@ -112,7 +119,7 @@ export async function recoverOnce(
       // 单个账号失败不影响其余
     }
   }
-  return { recovered, total: pending.length }
+  return { recovered, total }
 }
 
 /** 启动保活定时器。返回停止函数。 */
@@ -144,6 +151,8 @@ export function startKeepAlive(deps: KeepAliveDeps): () => void {
         // 有待恢复账号但一个都没成：短暂退避（60 秒）后再试，
         // 避免立刻重打同一面墙；连续数轮无进展则退回常规间隔
         fastRounds++
+      } else {
+        fastRounds = 0
       }
     } catch {
       // 恢复失败是静默的：下次扫描会再试

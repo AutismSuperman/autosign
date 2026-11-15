@@ -313,7 +313,7 @@ async function runOAuthInPartition(
 
           // 授权确认页优先：已登录时根本不会出现登录表单
           const authorizeScript = prov === 'linuxdo' ? linuxdoApproveScript() : githubAuthorizeScript()
-          const authRaw = await web.executeJavaScript(authorizeScript, true)
+          const authRaw = await web.executeJavaScript(authorizeScript)
           const authState =
             typeof authRaw === 'string'
               ? (JSON.parse(authRaw) as { step?: string; done?: boolean; msg?: string })
@@ -340,7 +340,7 @@ async function runOAuthInPartition(
           }
 
           const script = prov === 'linuxdo' ? linuxdoLoginScript(payload) : githubLoginScript(payload)
-          const raw = await web.executeJavaScript(script, true)
+          const raw = await web.executeJavaScript(script)
           const state =
             typeof raw === 'string'
               ? (JSON.parse(raw) as { step?: string; done?: boolean; msg?: string })

@@ -19,7 +19,8 @@ class TestWindow extends EventEmitter {
     this.webContents.isDestroyed = () => this.destroyed
     this.webContents.loadURL = (url) => this.loadURL(url)
     this.webContents.getURL = () => this.url
-    this.webContents.executeJavaScript = async (script) => {
+    this.webContents.executeJavaScript = async (script, userGesture) => {
+      assert.notEqual(userGesture, true, 'automatic OAuth scripts must not impersonate a user gesture')
       if (script.includes('not-authorize')) return JSON.stringify({
         step: scenario.authorizeStep ?? 'not-authorize', done: true, msg: 'test provider error'
       })

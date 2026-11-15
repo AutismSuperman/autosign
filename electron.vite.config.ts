@@ -32,7 +32,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/preload/index.ts'),
-          chrome: resolve(__dirname, 'src/preload/chrome.ts')
+          chrome: resolve(__dirname, 'src/preload/chrome.ts'),
+          auth: resolve(__dirname, 'src/preload/auth.ts')
         }
       }
     }

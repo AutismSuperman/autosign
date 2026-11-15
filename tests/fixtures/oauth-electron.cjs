@@ -90,6 +90,9 @@ async function main() {
   }
   assert.equal(providerRequests, 4)
 
+  await require('./github-fill.cjs').verifyGitHubFill()
+  await require('./auth-passkeys.cjs').verifyAuthPasskeys()
+
   const { win, web } = createAuthWindow(ses, 'Demo authorization', false)
   await web.loadURL(`${baseUrl}/login-demo`)
   for (let i = 0; i < 100; i++) {
@@ -111,13 +114,18 @@ async function main() {
   win.show()
   await new Promise(resolve => setTimeout(resolve, 400))
   writeFileSync(join(process.cwd(), '.tmp/auth-window-light.png'), (await win.capturePage()).toPNG())
-  writeFileSync(join(process.cwd(), '.tmp/auth-page.png'), (await web.capturePage()).toPNG())
+  web.debugger.attach('1.3')
+  try {
+    const shot = await web.debugger.sendCommand('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(process.cwd(), '.tmp/auth-page.png'), Buffer.from(shot.data, 'base64'))
+  } finally {
+    web.debugger.detach()
+  }
   const destroyed = new Promise(resolve => web.once('destroyed', resolve))
   win.close()
   await destroyed
   assert.equal(BrowserWindow.getAllWindows().length, 0)
   console.log('PASS  authorization shell: themed controls, isolated page, view cleanup on close')
-  await require('./github-fill.cjs').verifyGitHubFill()
 }
 main().then(
   () => { server.close(); app.exit(0) },

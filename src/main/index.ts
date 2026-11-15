@@ -365,6 +365,7 @@ async function tryRebuildSession(
     cookie: attempt.cookie ?? account.cookie,
     token: attempt.token ?? account.token,
     siteUserId: attempt.siteUserId ?? account.siteUserId,
+    needsRelogin: false,
     ...(providerCookies ? { providerCookies } : {})
   })
   store.log('ok', '会话重建', `${site.name} / ${account.label}：用保存的凭据重新登录成功`, {
@@ -1057,7 +1058,7 @@ function registerIpc(): void {
       provider?: string,
       credentialId?: string,
       reauthAccountId?: string
-    ) => {
+    ) => withPartitionLock(`account-operation:${reauthAccountId ?? randomUUID()}`, async () => {
       const site = store.findSite(siteId)
       if (!site) return { ok: false, error: '站点不存在' } satisfies AccountResultDto
       const proxy = await currentProxy()
@@ -1112,7 +1113,8 @@ function registerIpc(): void {
                 siteUserId: account.siteUserId,
                 credentialId: account.credentialId,
                 provider: account.provider,
-                label: account.label
+                label: account.label,
+                needsRelogin: false
               }
             }
           } else {
@@ -1124,9 +1126,11 @@ function registerIpc(): void {
         // 重新授权后 must 用落库后的最新会话去读额度，否则仍拿旧 cookie 必然 401
         const freshAccount = store.findAccount(account.id) ?? account
         const snapshot = await readStatus(site, freshAccount, { proxy })
+        await patchAccount(account.id, {
+          lastStatus: mergeFailedSnapshot(account.id, snapshot),
+          needsRelogin: !snapshot.ok && isSessionExpired(snapshot.error)
+        })
         if (snapshot.ok) {
-          // 重新登录成功：清掉「需要手动登录」标记
-          await patchAccount(account.id, { lastStatus: snapshot, needsRelogin: false })
           await syncCheckinReceipt(site, account.id, snapshot)
           store.log('ok', '授权', `${site.name}：已通过密码登录 ${account.label}`, { siteId })
         } else {
@@ -1183,7 +1187,8 @@ function registerIpc(): void {
               siteUserId: account.siteUserId,
               credentialId: account.credentialId,
               provider: account.provider,
-              label: account.label
+              label: account.label,
+              needsRelogin: false
             }
           }
         } else {
@@ -1202,18 +1207,16 @@ function registerIpc(): void {
       // 分区丢失（换机器 / 重装 / 清缓存）时靠它恢复，不必再打扰用户点一次授权。
       // 密码登录没有第三方登录态，采到空值时会跳过写入。
       const providerCookies = await snapshotProviderSession(site, account.id)
+      await patchAccount(account.id, {
+        lastStatus: mergeFailedSnapshot(account.id, snapshot),
+        needsRelogin: !snapshot.ok && isSessionExpired(snapshot.error),
+        ...(providerCookies ? { providerCookies } : {})
+      })
       if (snapshot.ok) {
-        // 重新授权成功：清掉「需要手动登录」标记
-        await patchAccount(account.id, {
-          lastStatus: snapshot,
-          needsRelogin: false,
-          ...(providerCookies ? { providerCookies } : {})
-        })
         await syncCheckinReceipt(site, account.id, snapshot)
         store.log('ok', '授权', `${site.name}：已登录 ${account.label}`, { siteId })
       } else {
         error = snapshot.error
-        if (providerCookies) await patchAccount(account.id, { providerCookies })
         store.log('warn', '授权', `${site.name}：登录成功但额度读取失败（${snapshot.error}）`, {
           siteId
         })
@@ -1223,7 +1226,7 @@ function registerIpc(): void {
         account: { ...account, lastStatus: snapshot },
         error
       } satisfies AccountResultDto
-    }
+    })
   )
 
   ipcMain.handle(IPC.accountRemove, async (_e, accountId: string) => {
@@ -1745,6 +1748,8 @@ app.whenReady().then(async () => {
     recover: (accountId) => withPartitionLock(`account-operation:${accountId}`, async () => {
       const hit = siteOf(accountId)
       if (!hit) return { ok: false, error: '账号不存在' }
+      // Manual authorization may have succeeded while this recovery waited for the lock.
+      if (hit.account.needsRelogin !== true) return { ok: true }
       const proxy = await currentProxy()
       const snapshot = await readStatus(hit.site, store.findAccount(accountId) ?? hit.account, {
         proxy,
@@ -1761,8 +1766,11 @@ app.whenReady().then(async () => {
           proxy,
           session: sessionDeps(hit.site.id, accountId, proxy)
         })
+        await patchAccount(accountId, {
+          lastStatus: mergeFailedSnapshot(accountId, after),
+          needsRelogin: !after.ok && isSessionExpired(after.error)
+        })
         if (!after.ok) return { ok: false, error: after.error }
-        await patchAccount(accountId, { lastStatus: after, needsRelogin: false })
         await syncCheckinReceipt(hit.site, accountId, after)
         return { ok: true }
       }

@@ -2,6 +2,7 @@ import { app, BrowserWindow, nativeTheme, WebContentsView } from 'electron'
 import type { Session, WebContents } from 'electron'
 import { join } from 'node:path'
 import { attachWindowChrome } from './windowChrome'
+import { AUTH_INTERACTIVE_IPC } from '../shared/authWindow'
 
 const TITLE_HEIGHT = 44
 
@@ -11,7 +12,10 @@ export function createAuthWindow(
 ): { win: BrowserWindow; web: WebContents } {
   const remotePreferences = {
     session: ses, contextIsolation: true, nodeIntegration: false,
-    sandbox: true, backgroundThrottling: false
+    sandbox: true, backgroundThrottling: false,
+    // A hidden browser can still open Windows Security outside its own window.
+    disableBlinkFeatures: silent ? 'WebAuth' : undefined,
+    preload: silent ? undefined : join(app.getAppPath(), 'out/preload/auth.js')
   }
   if (silent) {
     const win = new BrowserWindow({
@@ -33,6 +37,18 @@ export function createAuthWindow(
   const setOrigin = attachWindowChrome(win, title)
   const content = new WebContentsView({ webPreferences: remotePreferences })
   win.contentView.addChildView(content)
+  let interactive = false
+  const updateInteractive = (value: boolean): void => {
+    interactive = value
+    if (!content.webContents.isDestroyed()) {
+      content.webContents.send(AUTH_INTERACTIVE_IPC, interactive)
+    }
+  }
+  content.webContents.on('dom-ready', () => updateInteractive(interactive))
+  win.on('show', () => updateInteractive(true))
+  win.on('hide', () => updateInteractive(false))
+  win.on('minimize', () => updateInteractive(false))
+  win.on('restore', () => updateInteractive(true))
   const layout = (): void => {
     const [width, height] = win.getContentSize()
     content.setBounds({ x: 0, y: TITLE_HEIGHT, width, height: Math.max(0, height - TITLE_HEIGHT) })
