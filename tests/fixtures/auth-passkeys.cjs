@@ -41,6 +41,11 @@ exports.verifyAuthPasskeys = async function verifyAuthPasskeys() {
       window.initialAttempts = Promise.all([
         passkey('get'), passkey('create'), passkey('get', 'conditional')
       ]);
+      window.addEventListener('click', event => {
+        window.lastReceivedClick = {
+          target: event.target.id, x: event.clientX, y: event.clientY, trusted: event.isTrusted
+        };
+      }, true);
       for (const method of ['create', 'get']) {
         document.querySelector('#' + method).addEventListener('click', event => {
           window.lastClick = {
@@ -72,15 +77,46 @@ exports.verifyAuthPasskeys = async function verifyAuthPasskeys() {
     await web.loadURL('https://github.com/login')
     assert.deepEqual(errors, [], 'authorization preload must load before page scripts')
     assert.equal(win.isVisible(), false)
+    if (win.webContents !== web) {
+      let ready = false
+      for (let i = 0; i < 100; i++) {
+        ready = await win.webContents.executeJavaScript("!!document.querySelector('.window-controls')").catch(() => false)
+        if (ready) break
+        await sleep(50)
+      }
+      assert.ok(ready, 'authorization chrome must finish loading before native input')
+    }
   }
-  async function click(web, id) {
-    await web.executeJavaScript('window.manualResult = undefined')
+  async function click(win, web, id) {
+    await web.executeJavaScript('window.manualResult = undefined; window.lastReceivedClick = undefined')
     const point = await web.executeJavaScript(`(() => {
       const r = document.querySelector('#${id}').getBoundingClientRect();
       return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
     })()`)
+    win.focus()
     web.focus()
-    // CDP input is trusted browser input and does not depend on native window focus timing.
+    await web.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+    if (process.platform === 'win32') {
+      let rendered = false
+      let renderError
+      for (let i = 0; i < 30; i++) {
+        try {
+          rendered = !(await web.capturePage()).isEmpty()
+          if (rendered) break
+        } catch (error) {
+          renderError = error.message
+        }
+        await sleep(100)
+      }
+      assert.ok(rendered, `authorization view needs a rendered input surface: ${renderError ?? 'empty'}`)
+      assert.equal(win.isFocused(), true, 'manual input requires the native window to be focused')
+      assert.equal(web.isFocused(), true, 'manual input requires the authorization view to be focused')
+    }
+    await web.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseMoved', ...point, button: 'none', buttons: 0
+    })
+    await sleep(50)
+    assert.equal(await web.executeJavaScript(`document.elementFromPoint(${point.x}, ${point.y})?.id`), id)
     await web.debugger.sendCommand('Input.dispatchMouseEvent', {
       type: 'mousePressed', ...point, button: 'left', buttons: 1, clickCount: 1
     })
@@ -94,7 +130,11 @@ exports.verifyAuthPasskeys = async function verifyAuthPasskeys() {
       }
       await sleep(20)
     }
-    throw new Error('trusted click did not reach the authorization page')
+    throw new Error('trusted click did not reach the authorization page: ' +
+      await web.executeJavaScript(`JSON.stringify({
+        expected: ${JSON.stringify(point)}, received: window.lastReceivedClick,
+        width: innerWidth, height: innerHeight, scale: devicePixelRatio
+      })`))
   }
   try {
     const hidden = createAuthWindow(ses, 'Test silent authorization', true)
@@ -126,6 +166,7 @@ exports.verifyAuthPasskeys = async function verifyAuthPasskeys() {
 
     win.show()
     await sleep(150)
+    assert.equal(win.isVisible(), true, 'manual passkey verification needs a visible native window')
     assert.equal(await web.executeJavaScript("passkey('create')", true), 'NotAllowedError')
     assert.equal(await web.executeJavaScript(`(() => {
       document.querySelector('#create').click();
@@ -133,10 +174,10 @@ exports.verifyAuthPasskeys = async function verifyAuthPasskeys() {
     })()`, true), 'NotAllowedError')
     console.log('PASS  passkeys: showing a window or injecting a synthetic click does not authorize a native prompt')
 
-    assert.equal(await click(web, 'create'), 'allowed', await web.executeJavaScript(
+    assert.equal(await click(win, web, 'create'), 'allowed', await web.executeJavaScript(
       'JSON.stringify({ error: window.passkeyError, click: window.lastClick })'
     ) + ` mode signals: ${JSON.stringify(modeSignals)}; visible: ${win.isVisible()}`)
-    assert.equal(await click(web, 'get'), 'allowed')
+    assert.equal(await click(win, web, 'get'), 'allowed')
     console.log('PASS  passkeys: real user clicks can create and use a passkey after handover')
     assert.equal(await web.executeJavaScript("passkey('get')", true), 'NotAllowedError')
     console.log('PASS  passkeys: completed authentication cannot prompt again without a new real user interaction')
@@ -152,13 +193,13 @@ exports.verifyAuthPasskeys = async function verifyAuthPasskeys() {
     if (process.platform === 'win32') {
       win.show()
       await sleep(100)
-      assert.equal(await click(web, 'create'), 'allowed')
+      assert.equal(await click(win, web, 'create'), 'allowed')
       win.minimize()
       await sleep(100)
       assert.equal(await web.executeJavaScript("passkey('get')", true), 'NotAllowedError')
       win.restore()
       await sleep(100)
-      assert.equal(await click(web, 'get'), 'allowed')
+      assert.equal(await click(win, web, 'get'), 'allowed')
       console.log('PASS  passkeys: minimizing revokes permission and restoring requires another real click')
     }
   } finally {

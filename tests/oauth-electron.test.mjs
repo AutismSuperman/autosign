@@ -21,10 +21,18 @@ const env = { ...process.env }
 delete env.ELECTRON_RUN_AS_NODE
 async function verifyFixture(fixture) {
   return new Promise(resolve => {
+    // Other desktop apps must not occlude and stall the interactive test's rendered frames.
     const child = spawn(electronPath, [
-      join('tests', 'fixtures', fixture), '--disable-gpu', '--no-sandbox',
+      join('tests', 'fixtures', fixture), '--no-sandbox',
+      ...(process.platform === 'win32' && fixture === 'oauth-electron.cjs'
+        ? ['--disable-features=CalculateNativeWinOcclusion']
+        : ['--disable-gpu']),
       `--user-data-dir=${join(process.cwd(), '.tmp', `oauth-verify-data-${process.pid}-${fixture}`)}`
-    ], { cwd: process.cwd(), env, windowsHide: true, stdio: 'inherit' })
+    ], {
+      cwd: process.cwd(), env,
+      windowsHide: fixture === 'reauth-success.cjs',
+      stdio: 'inherit'
+    })
     const timer = setTimeout(() => {
       console.error(`FAIL  Electron verification timed out: ${fixture}`)
       child.kill()

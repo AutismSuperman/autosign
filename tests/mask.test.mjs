@@ -33,19 +33,19 @@ const ck = (name, ok, detail) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  [${detail}]` : ''}`)
 }
 
-const ids = ['github_679839', 'demo-user@example.com']
+const ids = ['demo-github-user', 'demo-user@example.com']
 const join = (segs) => segs.map((s) => (s.kind === 'mask' ? `«${s.value}»` : s.value)).join('')
 
 // 1. 账号命中，站点名与结果描述保持为普通文字
 {
-  const segs = splitByIdentifiers('AgentRouter / github_679839：签到成功 +$25', ids)
+  const segs = splitByIdentifiers('AgentRouter / demo-github-user：签到成功 +$25', ids)
   const text = join(segs)
-  ck('账号被标为遮罩段', segs.some((s) => s.kind === 'mask' && s.value === 'github_679839'), text)
+  ck('账号被标为遮罩段', segs.some((s) => s.kind === 'mask' && s.value === 'demo-github-user'), text)
   ck('站点名保持不变', text.startsWith('AgentRouter / '), text)
   ck('结果描述保持不变', text.endsWith('：签到成功 +$25'), text)
   ck(
     '普通文字段里不含账号原文',
-    segs.filter((s) => s.kind === 'text').every((s) => !s.value.includes('github_679839')),
+    segs.filter((s) => s.kind === 'text').every((s) => !s.value.includes('demo-github-user')),
     text
   )
 }
@@ -67,7 +67,7 @@ const join = (segs) => segs.map((s) => (s.kind === 'mask' ? `«${s.value}»` : s
 // 4. 同一句里出现多个账号
 {
   const segs = splitByIdentifiers(
-    'github_679839 与 demo-user@example.com 都已签到',
+    'demo-github-user 与 demo-user@example.com 都已签到',
     ids
   )
   const masks = segs.filter((s) => s.kind === 'mask').map((s) => s.value)
@@ -87,16 +87,16 @@ ck('空标识清单返回原文', join(splitByIdentifiers('abc', [])) === 'abc')
 ck('空白标识被忽略', join(splitByIdentifiers('abc', ['', '  '])) === 'abc')
 
 // 7. containsIdentifier 用于快速判断是否需要切分
-ck('能判断出包含账号', containsIdentifier('a github_679839 b', ids) === true)
+ck('能判断出包含账号', containsIdentifier('a demo-github-user b', ids) === true)
 ck('能判断出不包含账号', containsIdentifier('nothing here', ids) === false)
 ck('空清单时不命中', containsIdentifier('abc', []) === false)
 
 // 8. 账号出现在句首 / 句尾
 {
-  const head = join(splitByIdentifiers('github_679839：签到成功', ids))
-  ck('句首账号也能遮', head === '«github_679839»：签到成功', head)
-  const tail = join(splitByIdentifiers('签到成功 github_679839', ids))
-  ck('句尾账号也能遮', tail === '签到成功 «github_679839»', tail)
+  const head = join(splitByIdentifiers('demo-github-user：签到成功', ids))
+  ck('句首账号也能遮', head === '«demo-github-user»：签到成功', head)
+  const tail = join(splitByIdentifiers('签到成功 demo-github-user', ids))
+  ck('句尾账号也能遮', tail === '签到成功 «demo-github-user»', tail)
 }
 
 const failed = checks.filter((x) => !x).length

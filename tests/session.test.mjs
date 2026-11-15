@@ -152,6 +152,15 @@ const [ra, rb] = await Promise.all([
 check('并发续期合并为一次', refreshCalls === 1, `refreshCalls=${refreshCalls}`)
 check('两个并发请求都成功', ra.status === 200 && rb.status === 200)
 
+// Keep the rejected snapshot after the first refresh has completed and released its lock.
+refreshCalls = 0
+account = { ...account, token: 'tok-old', cookie: 'session=old-cookie' }
+const rejectedSnapshot = account
+const refreshed = await requestWithHealing(site, rejectedSnapshot, 'GET', '/api/user/self', deps)
+const late = await requestWithHealing(site, rejectedSnapshot, 'GET', '/api/user/self', deps)
+check('旧快照收到 401 后复用已轮换的令牌', refreshCalls === 1, `refreshCalls=${refreshCalls}`)
+check('较晚的旧请求仍用新令牌重试成功', refreshed.status === 200 && late.status === 200 && late.token === 'tok-new')
+
 // 4) 409 立即停止
 refreshCalls = 0
 selfCalls = 0
@@ -207,6 +216,14 @@ check('isSessionDead 不误判 200', isSessionDead(200, 'ok') === false)
   check('有效 token 非强制续期直接复用', await renewToken(site, account, deps) === 'opaque-token')
   const forced = await renewToken(site, account, deps, true)
   check('有效 token 后续被拒绝时仍能强制续期', forced === 'tok-new' && refreshCalls === 1)
+}
+{
+  refreshCalls = 0
+  const payload = Buffer.from(JSON.stringify({ exp: 1 })).toString('base64url')
+  account = { ...account, id: 'test-expired-replacement', token: `test.${payload}.test` }
+  const stale = { ...account, token: 'tok-old' }
+  const forced = await renewToken(site, stale, deps, true)
+  check('已替换但过期的令牌仍需续期', forced === 'tok-new' && refreshCalls === 1)
 }
 
 const failed = results.filter((r) => !r.ok)

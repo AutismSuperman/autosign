@@ -10,6 +10,9 @@ const data = join(root, '.tmp', `reauth-success-data-${process.pid}`)
 app.setPath('userData', data)
 app.setAppPath(root)
 app.disableHardwareAcceleration()
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('password-store', 'gnome-libsecret')
+}
 
 const handlers = new Map()
 const handle = ipcMain.handle.bind(ipcMain)
@@ -68,6 +71,9 @@ async function config() {
 async function main() {
   await app.whenReady()
   assert.ok(safeStorage.isEncryptionAvailable(), 'test credentials require OS encryption')
+  if (process.platform === 'linux') {
+    assert.notEqual(safeStorage.getSelectedStorageBackend(), 'basic_text', 'test credentials require a system keyring')
+  }
   const seal = value => 'enc:v1:' + safeStorage.encryptString(value).toString('base64')
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   const baseUrl = `http://127.0.0.1:${server.address().port}`

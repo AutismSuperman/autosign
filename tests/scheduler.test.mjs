@@ -5,6 +5,9 @@ import { join } from 'node:path'
 import { build } from 'esbuild'
 
 const require = createRequire(import.meta.url)
+const originalTimezone = process.env.TZ
+// These local-clock scenarios share the Beijing reward-day boundary.
+process.env.TZ = 'Asia/Shanghai'
 mkdirSync('.tmp', { recursive: true })
 await build({
   stdin: {
@@ -211,6 +214,25 @@ try {
     assert.equal(h.calls.length, 4)
     h.scheduler.stop()
   })
+  await test('UTC local schedules reset at the Beijing reward-day boundary', async () => {
+    process.env.TZ = 'UTC'
+    const h = harness({ handler: async () => ({ ok: true, message: 'ok' }) })
+    try {
+      await h.scheduler.tick()
+      h.setNow(local(9, 15, 59))
+      await h.scheduler.tick()
+      assert.deepEqual(h.calls, ['test-a', 'test-b'])
+      assert.equal(h.saved.date, '2026-11-09')
+      h.setNow(local(9, 16))
+      await h.scheduler.tick()
+      assert.deepEqual(h.calls, ['test-a', 'test-b', 'test-a', 'test-b'])
+      assert.equal(h.saved.date, '2026-11-10')
+      assert.equal(h.saved.accounts['test-a'].attempts, 1)
+    } finally {
+      h.scheduler.stop()
+      process.env.TZ = 'Asia/Shanghai'
+    }
+  })
   await test('concurrent wakeups share one batch', async () => {
     const h = harness({ handler: async () => ({ ok: true, message: 'ok' }) })
     await Promise.all([h.scheduler.tick(), h.scheduler.tick(), h.scheduler.tick()])
@@ -275,6 +297,8 @@ try {
 } finally {
   globalThis.setTimeout = realSetTimeout
   globalThis.clearTimeout = realClearTimeout
+  if (originalTimezone === undefined) delete process.env.TZ
+  else process.env.TZ = originalTimezone
 }
 assert.equal(timers.size, 0, 'scheduler timers leaked')
 console.log(`ALL PASS (${passed} scheduler checks)`)

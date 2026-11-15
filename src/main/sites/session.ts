@@ -57,9 +57,9 @@ function hasRefreshCookie(cookie: string | undefined): boolean {
 /**
  * 用 refresh cookie 续期短期令牌。
  *
- * @param force 由 401 触发时为 true。此时无论 JWT 看起来是否过期都必须续期：
- *              服务端已明确拒绝该 token（可能被吊销、密钥轮换，或本就不是 JWT），
- *              只能靠 refresh cookie 换新的。
+ * @param force 由 401 触发时为 true。被拒绝的 token 仍是账号最新值时必须续期，
+ *              无论 JWT 看起来是否过期（可能被吊销、密钥轮换，或本就不是 JWT）。
+ *              如果其它请求已轮换出有效的新 token，则直接复用新值。
  *
  * 已续期过则直接复用结果：并发请求不应各自消费同一个 refresh cookie。
  */
@@ -75,8 +75,9 @@ export async function renewToken(
   const task = (async (): Promise<string> => {
     // 进入临界区后重新读账号：可能已被上一个持锁者更新
     const fresh = deps.readAccount(account.id) ?? account
-    // 401 已证明当前 token 不可用；非强制场景才按 JWT 有效期提前续
-    if (!force && fresh.token && !needsRefresh(fresh.token)) return fresh.token
+    // A delayed 401 rejects the request snapshot, not a token another request already replaced.
+    if (fresh.token && !needsRefresh(fresh.token) &&
+        (!force || fresh.token !== account.token)) return fresh.token
     if (!hasRefreshCookie(fresh.cookie)) return ''
 
     const base = site.baseUrl.replace(/\/+$/, '')

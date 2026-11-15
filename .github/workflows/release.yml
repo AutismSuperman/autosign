@@ -41,6 +41,7 @@ jobs:
         run: npm run check:notes
 
       - name: 单元测试
+        shell: bash
         run: npm test 2>&1 | tee test-output.log
 
       - name: 测试失败时保留输出
@@ -64,16 +65,25 @@ jobs:
             libgtk-3-0 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
             libdrm2 libgbm1 libasound2t64 libxcomposite1 libxdamage1 \
             libxfixes3 libxkbcommon0 libxrandr2 libxshmfence1 \
-            libpango-1.0-0 libcairo2 libatspi2.0-0
+            libpango-1.0-0 libcairo2 libatspi2.0-0 \
+            dbus-x11 gnome-keyring libsecret-1-0
 
       - name: 确保 Electron 二进制已下载
         run: node node_modules/electron/install.js
 
       - name: 界面验证
+        shell: bash
         run: xvfb-run --auto-servernum npm run verify:ui 2>&1 | tee verify-output.log
 
       - name: 授权与定时签到回归
-        run: xvfb-run --auto-servernum sh -c 'npm run verify:oauth && npm run verify:schedule'
+        shell: bash
+        run: |
+          export XDG_DATA_HOME="$(mktemp -d)"
+          dbus-run-session -- xvfb-run --auto-servernum bash -ec '
+            printf "%s" "test-keyring-password" | gnome-keyring-daemon --unlock --components=secrets
+            npm run verify:oauth
+            npm run verify:schedule
+          '
 
       - name: 界面验证失败时保留输出
         if: failure()

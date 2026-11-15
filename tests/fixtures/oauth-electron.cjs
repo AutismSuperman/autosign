@@ -7,7 +7,8 @@ const { app, BrowserWindow, session, nativeTheme } = require('electron')
 app.setPath('userData', join(process.cwd(), '.tmp', `oauth-electron-data-${process.pid}`))
 app.setAppPath(process.cwd())
 app.on('window-all-closed', () => {})
-app.disableHardwareAcceleration()
+// Match the application's Windows rendering path for interactive embedded views.
+if (process.platform !== 'win32') app.disableHardwareAcceleration()
 const { silentReauth, runOAuth, createAuthWindow } = require('../../.tmp/oauth-electron.cjs')
 
 let scenario
