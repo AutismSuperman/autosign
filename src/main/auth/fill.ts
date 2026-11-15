@@ -80,39 +80,94 @@ export function githubLoginScript(payload: FillPayload): string {
   const out = (step, done, msg) => JSON.stringify({ step, done, msg: msg || '' });
 
   if (location.hostname !== 'github.com') return out('not-login-page', true);
-  if (!/^github\\.com$/i.test(location.hostname)) return out('not-login-page', true);
+
+  // Keep submission tied to the filled fields, never to another form on the page.
+  const submitFields = async (form, fields, step) => {
+    if (!form || fields.some(([field]) => field.form !== form) ||
+        new URL(form.action, location.href).origin !== location.origin) {
+      return out('manual', true, 'GitHub 登录字段不属于同一安全表单，请手动完成登录');
+    }
+    if (form.dataset.autosignSubmitted === '1') return out('already-submitted', false);
+    let submitted = false;
+    const onSubmit = () => {
+      submitted = true;
+      form.dataset.autosignSubmitted = '1';
+    };
+    // GitHub may submit an OTP form from its input/change handler.
+    form.addEventListener('submit', onSubmit, true);
+    try {
+      for (const [field, value] of fields) {
+        if (submitted) break;
+        if (!setValue(field, value)) return out('manual', true, 'GitHub 登录字段无法填充，请手动完成登录');
+      }
+      await sleep(150);
+      for (let i = 0; i < 20; i++) {
+        if (submitted) return out(step, true);
+        if (!form.isConnected) break;
+        const buttons = [...form.elements].filter((el) => {
+          if (el.form !== form || !/^(BUTTON|INPUT)$/.test(el.tagName) ||
+              el.type !== 'submit' || !visible(el) || el.matches(':disabled')) return false;
+          const label = [el.name, el.id, el.value, el.textContent,
+            el.getAttribute('data-action'), el.getAttribute('aria-label')].join(' ');
+          if (/passkey|webauthn|security.key|cancel|recovery|通行密钥|安全密钥|取消|恢复码/i.test(label)) return false;
+          const action = el.getAttribute('formaction');
+          return !action || new URL(action, location.href).href === new URL(form.action, location.href).href;
+        });
+        if (buttons.length === 1) {
+          form.dataset.autosignSubmitted = '1';
+          click(buttons[0]);
+          return out(step, true);
+        }
+        await sleep(120);
+      }
+      // Do not bypass a disabled/missing submit control with form.submit().
+      return out('manual', true, 'GitHub 登录表单尚未就绪或提交按钮不明确，请手动完成登录');
+    } finally {
+      form.removeEventListener('submit', onSubmit, true);
+    }
+  };
 
   // 设备验证 / 异常登录确认：只能人工处理，不做任何尝试
   if (/verified-device|device-verification/i.test(location.pathname + location.search)) {
     return out('manual', true, 'GitHub 要求设备验证，需要人工完成');
   }
 
-  const otp = pick('input[name="app_otp"],#app_otp,#otp,input[autocomplete="one-time-code"]')
-    || pick('input[name*="otp" i],input[name*="totp" i]');
+  const twoFactor = /^\\/sessions\\/two-factor(?:\\/|$)/i.test(location.pathname);
+  const appPage = /^\\/sessions\\/two-factor(?:\\/app)?\\/?$/i.test(location.pathname);
+  const otp = pick('input[name="app_otp"],#app_otp') ||
+    (appPage ? pick('#otp,input[name="otp"],input[autocomplete="one-time-code"]') : null);
 
   // 两步验证页：填码并提交
   if (otp) {
     if (${payload.skipOtp === true}) return out('already-submitted', true);
     if (!O) return out('need-otp', true, '该账号需要两步验证，但凭据里没有 TOTP 密钥');
-    if (!setValue(otp, O)) return out('fill-failed', true, '两步验证输入框不可填');
-    await sleep(150);
-    click(pick('form button[type="submit"],button[type="submit"],button[name="commit"]'));
-    return out('submitted-otp', true);
+    return submitFields(otp.form, [[otp, O]], 'submitted-otp');
   }
 
   // 两步验证页但默认方式是 GitHub Mobile / 安全密钥：切到验证器输入
-  if (O && /two-factor|sessions/i.test(location.pathname)) {
+  if (twoFactor) {
+    if (!O) return out('need-otp', true, 'GitHub 要求两步验证，未保存 TOTP 密钥，请手动选择验证方式');
     const els = [...document.querySelectorAll('a,button,summary')].filter((el) => visible(el));
-    const link = els.find(
-      (el) => /authenticator|verification code|验证器|验证码/i.test(el.textContent || '') &&
-        !/passkey|security key|sms|短信|recovery|恢复码/i.test(el.textContent || '')
-    );
+    const link = els.find((el) => {
+      if (el.tagName !== 'A') return false;
+      const target = new URL(el.getAttribute('href') || '', location.href);
+      return target.origin === location.origin && target.pathname === '/sessions/two-factor/app';
+    }) || els.find((el) => el.tagName === 'BUTTON' && !el.disabled &&
+      /^(use (an? |your )?)?(authenticator( app)?|authentication app|verification code|验证器|验证码)$/i.test(
+        (el.textContent || '').trim()
+      ));
     if (link) {
       click(link);
       await sleep(500);
       return out('switched-2fa', false);
     }
-    const more = els.find((el) => /other options|more options|其他方式|更多选项/i.test(el.textContent || ''));
+    const more = els.find((el) => {
+      if (el.tagName !== 'BUTTON' && el.tagName !== 'SUMMARY') return false;
+      if (el.disabled || el.getAttribute('aria-expanded') === 'true' || el.closest('details')?.open) return false;
+      return /^(other options|more options|other verification methods|use another method|其他方式|更多选项)$/i.test(
+        (el.textContent || '').trim()
+      );
+    });
     if (more) {
       click(more);
       await sleep(400);
@@ -128,24 +183,7 @@ export function githubLoginScript(payload: FillPayload): string {
     if (${payload.skipPassword === true}) return out('already-submitted', false);
     if (captchaPending()) return out('manual', true, '登录页要求人机验证，需要人工完成');
     if (!P) return out('partial', true, '凭据里没有密码，无法自动登录');
-    if (!setValue(acc, U) || !setValue(pwd, P)) {
-      return out('partial', true, '登录表单字段填充失败');
-    }
-    // 等按钮就绪再点，且只点一次
-    for (let i = 0; i < 20; i++) {
-      const btn = pick('form button[type="submit"],input[type="submit"],button[type="submit"]');
-      if (btn) {
-        click(btn);
-        return out('submitted', true);
-      }
-      await sleep(120);
-    }
-    const form = acc.closest('form');
-    if (form) {
-      if (form.requestSubmit) form.requestSubmit(); else form.submit();
-      return out('submitted', true);
-    }
-    return out('no-submit', true, '找不到登录按钮');
+    return submitFields(acc.form, [[acc, U], [pwd, P]], 'submitted');
   }
 
   // 页面还在渲染：让调用方稍后重试
@@ -176,6 +214,9 @@ export function githubAuthorizeScript(): string {
 
   // 站点后台登记的客户端与回传地址不匹配：这是站点配置问题，重试无用，直接报出来
   const pageText = document.body ? (document.body.innerText || '') : '';
+  if (/Your browser did something unexpected/i.test(pageText)) {
+    return out('browser-error', true, 'GitHub 拒绝了本次登录请求，请重新发起授权；若仍出现此错误，请稍后重试');
+  }
   if (/redirect_uri.*is not associated with this application/i.test(pageText) ||
       /Invalid Redirect URI/i.test(document.title || '')) {
     return out('invalid-redirect', true, '站点的 OAuth 应用未登记该回调地址');

@@ -320,6 +320,10 @@ async function runOAuthInPartition(
               : null
           if (authState?.step === 'authorized') return
           if (authState?.step === 'already-authorized') return
+          if (authState?.step === 'browser-error') {
+            settle({ ok: false, error: authState.msg || 'GitHub 拒绝了本次登录请求，请重新发起授权' })
+            return
+          }
           if (authState?.step === 'invalid-redirect') {
             settle({
               ok: false,

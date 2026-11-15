@@ -7,7 +7,7 @@ import { electronPath } from '../scripts/electron-path.mjs'
 mkdirSync('.tmp', { recursive: true })
 await build({
   stdin: {
-    contents: "export { silentReauth } from './src/main/sites/silentReauth'; export { runOAuth } from './src/main/sites/oauth'; export { createAuthWindow } from './src/main/authWindow'",
+    contents: "export { silentReauth } from './src/main/sites/silentReauth'; export { runOAuth } from './src/main/sites/oauth'; export { createAuthWindow } from './src/main/authWindow'; export { githubLoginScript, githubAuthorizeScript } from './src/main/auth/fill'",
     resolveDir: process.cwd()
   },
   bundle: true,
@@ -25,7 +25,7 @@ const child = spawn(electronPath, [join('tests', 'fixtures', 'oauth-electron.cjs
 const timer = setTimeout(() => {
   console.error('FAIL  Electron OAuth verification timed out')
   child.kill()
-}, 30_000)
+}, 60_000)
 child.once('error', (error) => {
   clearTimeout(timer)
   console.error(error.message)

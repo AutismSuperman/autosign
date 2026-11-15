@@ -117,6 +117,7 @@ async function main() {
   await destroyed
   assert.equal(BrowserWindow.getAllWindows().length, 0)
   console.log('PASS  authorization shell: themed controls, isolated page, view cleanup on close')
+  await require('./github-fill.cjs').verifyGitHubFill()
 }
 main().then(
   () => { server.close(); app.exit(0) },

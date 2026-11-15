@@ -20,7 +20,9 @@ class TestWindow extends EventEmitter {
     this.webContents.loadURL = (url) => this.loadURL(url)
     this.webContents.getURL = () => this.url
     this.webContents.executeJavaScript = async (script) => {
-      if (script.includes('not-authorize')) return JSON.stringify({ step: 'not-authorize', done: true })
+      if (script.includes('not-authorize')) return JSON.stringify({
+        step: scenario.authorizeStep ?? 'not-authorize', done: true, msg: 'test provider error'
+      })
       scenario.loginCalls++
       if (scenario.loginStep) return JSON.stringify({ step: scenario.loginStep, done: true, msg: 'test manual verification' })
       if (scenario.loginCalls === 1) {
@@ -236,6 +238,15 @@ await test('manual verification stops silent OAuth without showing a window', {
 }, (result, state) => {
   assert.equal(result.ok, false)
   assert.match(result.error, /test manual verification/)
+  assert.equal(state.exchanges, 0)
+  assert.ok(state.windows.every((win) => !win.visible))
+})
+await test('GitHub browser error ends OAuth without entering credentials or retrying', {
+  twoFactor: true, authorizeStep: 'browser-error'
+}, (result, state) => {
+  assert.equal(result.ok, false)
+  assert.equal(result.error, 'test provider error')
+  assert.equal(state.loginCalls, 0)
   assert.equal(state.exchanges, 0)
   assert.ok(state.windows.every((win) => !win.visible))
 })
