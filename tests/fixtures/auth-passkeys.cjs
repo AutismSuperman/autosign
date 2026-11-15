@@ -80,10 +80,16 @@ exports.verifyAuthPasskeys = async function verifyAuthPasskeys() {
       return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
     })()`)
     web.focus()
-    web.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 })
-    web.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 })
+    // CDP input is trusted browser input and does not depend on native window focus timing.
+    await web.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mousePressed', ...point, button: 'left', buttons: 1, clickCount: 1
+    })
+    await web.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseReleased', ...point, button: 'left', buttons: 0, clickCount: 1
+    })
     for (let i = 0; i < 50; i++) {
       if (await web.executeJavaScript('window.manualResult !== undefined')) {
+        assert.equal(await web.executeJavaScript('window.lastClick.trusted'), true)
         return web.executeJavaScript('window.manualResult')
       }
       await sleep(20)
