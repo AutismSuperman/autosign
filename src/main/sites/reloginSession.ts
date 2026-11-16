@@ -22,6 +22,7 @@ export interface ReloginAttempt {
   token?: string
   siteUserId?: string
   error?: string
+  manualRequired?: boolean
 }
 
 /** 会话是否已失效（读额度、签到都靠这个判断要不要重建）。 */
@@ -142,6 +143,7 @@ export async function rebuildSession(
       if (silent.ok) return silent
       return {
         ok: false,
+        manualRequired: silent.manualRequired,
         error: `${silent.error ?? '静默重授权失败'}。请点「重新登录」手动完成一次`
       }
     }

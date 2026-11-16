@@ -34,6 +34,7 @@ export interface OAuthResult {
   username?: string
   siteUserId?: string
   error?: string
+  manualRequired?: boolean
 }
 
 export interface OAuthOptions {
@@ -266,6 +267,7 @@ async function runOAuthInPartition(
         if (options.silent) {
           settle({
             ok: false,
+            manualRequired: true,
             error: message || '第三方登录需要人工验证，请点「重新授权」完成一次'
           })
           return
@@ -321,7 +323,9 @@ async function runOAuthInPartition(
           if (authState?.step === 'authorized') return
           if (authState?.step === 'already-authorized') return
           if (authState?.step === 'browser-error') {
-            settle({ ok: false, error: authState.msg || 'GitHub 拒绝了本次登录请求，请重新发起授权' })
+            const error = authState.msg || 'GitHub 拒绝了本次登录请求，请重新发起授权'
+            if (options.silent) settle({ ok: false, error })
+            else handOver(error)
             return
           }
           if (authState?.step === 'invalid-redirect') {

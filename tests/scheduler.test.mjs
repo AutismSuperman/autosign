@@ -280,6 +280,23 @@ try {
     assert.equal(await run('test-a', work), 'ok')
     assert.equal(calls, 2)
   })
+  await test('an account excluded while persisting is not sent or counted as attempted', async () => {
+    let eligible = true
+    let calls = 0
+    let saved
+    const scheduler = new CheckinScheduler({
+      now: () => local(9), settings: () => defaults, online: () => true,
+      accounts: () => eligible ? [{ id: 'test-a', checked: false }] : [],
+      save: async (state) => { saved = state; eligible = false },
+      checkin: async () => { calls++; return { ok: true, message: 'ok' } },
+      log: () => {}, notify: () => {}
+    })
+    scheduler.start()
+    await scheduler.tick()
+    assert.equal(calls, 0)
+    assert.deepEqual(saved.accounts, {})
+    scheduler.stop()
+  })
   await test('schedule state round trips and invalid state is rejected', async () => {
     const dir = mkdtempSync(join('.tmp', 'schedule-state-'))
     const file = join(dir, 'schedule-state.json')

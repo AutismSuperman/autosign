@@ -54,7 +54,7 @@ function SiteIcon({ site }: { site: Site }): React.JSX.Element {
  * 左侧站点菜单。
  *
  * 站点行本身就是「可见性开关」：鼠标悬停时右侧的眼睛图标可以把它从侧栏收起，
- * 再点一次恢复。收起只是**侧栏不显示**，账号、额度、签到与定时任务完全不受影响，
+ * 再点一次恢复。收起会暂停后台签到与会话恢复，账号和历史数据保留，
  * 所以它不叫「隐藏」，也没有单独的「显示全部」入口 —— 开关就在原处，不需要去别处找。
  *
  * 另外还有整栏折叠为图标条（collapsed），那是纯布局，与站点可见性无关。
@@ -123,8 +123,8 @@ export function Sidebar(props: Props): React.JSX.Element {
                   e.stopPropagation()
                   props.onToggleSiteHidden(site.id, true)
                 }}
-                title={`从侧栏收起「${site.name}」（账号与数据不变）`}
-                aria-label={`从侧栏收起 ${site.name}`}
+                title={`从侧栏收起「${site.name}」并暂停自动签到（账号与数据不变）`}
+                aria-label={`收起 ${site.name} 并暂停自动签到`}
               >
                 <EyeOff size={13} />
               </button>

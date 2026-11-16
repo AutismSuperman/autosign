@@ -108,6 +108,8 @@ export interface Account {
    * 登录/重登成功或额度读取恢复后必须清掉，否则按钮会一直挂着。
    */
   needsRelogin?: boolean
+  /** Third-party login explicitly requires human verification; stop background recovery. */
+  autoRecoveryBlocked?: boolean
 }
 
 export interface CheckinReceipt {
@@ -211,7 +213,7 @@ export interface Site {
   quotaPerUnit?: number
   /** 用户自定义站点（不在内置目录中）。 */
   custom?: boolean
-  /** 侧边栏隐藏（数据保留）。 */
+  /** 收起站点并暂停后台签到与会话恢复，账号数据保留。 */
   hidden?: boolean
   accounts: Account[]
 }

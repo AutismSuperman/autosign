@@ -66,6 +66,7 @@ export async function keepAliveOnce(deps: KeepAliveDeps): Promise<{ renewed: num
   const proxy = await deps.proxy()
 
   for (const site of deps.sites()) {
+    if (site.hidden) continue
     for (const account of site.accounts) {
       if (!account.token && !account.cookie) continue
       // 续期换的是 access_token：没有 token 的纯 session 站（如 AgentRouter）
@@ -74,9 +75,11 @@ export async function keepAliveOnce(deps: KeepAliveDeps): Promise<{ renewed: num
       total++
       if (!needsRefresh(account.token)) continue
       try {
-        const token = await withPartitionLock(`account-operation:${account.id}`, () =>
-          renewToken(site, account, deps.sessionFor(site.id, account.id, proxy), false)
-        )
+        const token = await withPartitionLock(`account-operation:${account.id}`, async () => {
+          const current = deps.sites().find((item) => item.id === site.id)
+          if (!current || current.hidden) return undefined
+          return renewToken(current, account, deps.sessionFor(site.id, account.id, proxy), false)
+        })
         if (token) renewed++
       } catch {
         // 单个账号续期失败不影响其它账号
@@ -99,8 +102,9 @@ export async function recoverOnce(
   if (!deps.recover) return { recovered: 0, total: 0 }
   const pending = deps
     .sites()
+    .filter((site) => !site.hidden)
     .flatMap((site) => site.accounts.map((account) => ({ site, account })))
-    .filter(({ account }) => account.needsRelogin === true)
+    .filter(({ account }) => account.needsRelogin === true && !account.autoRecoveryBlocked)
   if (pending.length === 0) return { recovered: 0, total: 0 }
 
   let recovered = 0
@@ -108,7 +112,8 @@ export async function recoverOnce(
   for (const { account } of pending) {
     // Re-read state after each await; another account may have been authorized meanwhile.
     const stillPending = deps.sites().some((site) =>
-      site.accounts.some((current) => current.id === account.id && current.needsRelogin === true)
+      !site.hidden && site.accounts.some((current) =>
+        current.id === account.id && current.needsRelogin === true && !current.autoRecoveryBlocked)
     )
     if (!stillPending) continue
     total++

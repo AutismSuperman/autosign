@@ -255,6 +255,71 @@ function makeDeps(recover) {
   }
 }
 
+{
+  let calls = 0
+  const hidden = { id: 'test-hidden', hidden: true, accounts: [
+    { id: 'test-hidden-account', needsRelogin: true, cookie: 'session=test',
+      token: `test.${Buffer.from('{"exp":1}').toString('base64url')}.test` }
+  ] }
+  const deps = {
+    ...makeDeps(async () => { calls++; return { ok: true } }),
+    sites: () => [hidden],
+    sessionFor: () => { calls++; throw new Error('hidden site must not renew') }
+  }
+  const renewal = await keepAliveOnce(deps)
+  const recovery = await recoverOnce(deps)
+  check('隐藏站点不续期也不自动恢复', calls === 0 && renewal.total === 0 && recovery.total === 0)
+}
+
+{
+  let calls = 0
+  const result = await recoverOnce({
+    ...makeDeps(async () => { calls++; return { ok: false } }),
+    sites: () => [{ id: 'test-site', accounts: [
+      { id: 'test-manual', needsRelogin: true, autoRecoveryBlocked: true },
+      { id: 'test-transient', needsRelogin: true }
+    ] }]
+  })
+  check('人工验证账号停止后台重试，暂时失败仍可恢复', calls === 1 && result.total === 1)
+}
+
+{
+  const first = { id: 'test-visible', accounts: [{ id: 'test-first', needsRelogin: true }] }
+  const later = { id: 'test-later', accounts: [{ id: 'test-later-account', needsRelogin: true }] }
+  const calls = []
+  const result = await recoverOnce({
+    ...makeDeps(async () => ({ ok: true })),
+    sites: () => [first, later],
+    recover: async (id) => {
+      calls.push(id)
+      later.hidden = true
+      return { ok: true }
+    }
+  })
+  check('排队期间隐藏的站点不会继续恢复', calls.join(',') === 'test-first' && result.total === 1)
+}
+
+{
+  let release
+  let reads = 0
+  const site = { id: 'test-site', baseUrl: 'https://example.com', accounts: [
+    { id: 'test-hidden-queued', cookie: 'session=test',
+      token: `test.${Buffer.from('{"exp":1}').toString('base64url')}.test` }
+  ] }
+  const gate = new Promise((resolve) => { release = resolve })
+  const busy = withPartitionLock('account-operation:test-hidden-queued', () => gate)
+  const renewal = keepAliveOnce({
+    proxy: async () => '', sites: () => [site], log: () => {},
+    sessionFor: () => { reads++; throw new Error('hidden queued site must not renew') }
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  site.hidden = true
+  release()
+  await busy
+  await renewal
+  check('等待账号锁期间隐藏的站点不续期', reads === 0)
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} passed`)
 if (failed.length) process.exit(1)

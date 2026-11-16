@@ -189,7 +189,10 @@ async function patchAccount(accountId: string, patch: Partial<Account>): Promise
     for (const site of config.sites) {
       const idx = site.accounts.findIndex((a) => a.id === accountId)
       if (idx >= 0) {
-        site.accounts[idx] = { ...site.accounts[idx], ...patch }
+        site.accounts[idx] = {
+          ...site.accounts[idx], ...patch,
+          ...(patch.needsRelogin === false ? { autoRecoveryBlocked: false } : {})
+        }
         return
       }
     }
@@ -316,6 +319,9 @@ async function tryRebuildSession(
   account: Account,
   proxy: string
 ): Promise<{ ok: boolean; error?: string }> {
+  if (store.findAccount(account.id)?.autoRecoveryBlocked) {
+    return { ok: false, error: '第三方登录需要人工验证，请点「重新登录」完成一次' }
+  }
   const attempt = await rebuildSession(site, account, {
     proxy,
     findCredential: (id) => store.findCredential(id),
@@ -358,6 +364,7 @@ async function tryRebuildSession(
   const providerCookies = await snapshotProviderSession(site, account.id)
   if (!attempt.ok) {
     if (providerCookies) await patchAccount(account.id, { providerCookies })
+    if (attempt.manualRequired) await patchAccount(account.id, { autoRecoveryBlocked: true })
     return { ok: false, error: attempt.error }
   }
 
@@ -559,7 +566,7 @@ async function ensureSiteProbed(siteId: string, proxy: string): Promise<Site | u
 
 async function doCheckin(
   accountId: string,
-  opts: { force?: boolean } = {}
+  opts: { force?: boolean; automatic?: boolean } = {}
 ): Promise<CheckinResultDto> {
   return checkinFlight(accountId, () =>
     withPartitionLock(`account-operation:${accountId}`, () => doCheckinUnlocked(accountId, opts))
@@ -568,12 +575,21 @@ async function doCheckin(
 
 async function doCheckinUnlocked(
   accountId: string,
-  opts: { force?: boolean } = {}
+  opts: { force?: boolean; automatic?: boolean } = {}
 ): Promise<CheckinResultDto> {
   const hit = siteOf(accountId)
   if (!hit) return { ok: false, already: false, message: '账号不存在' }
+  if (opts.automatic && hit.site.hidden) {
+    return { ok: true, already: true, message: '站点已隐藏，已跳过自动签到' }
+  }
+  if (hit.account.autoRecoveryBlocked) {
+    return { ok: false, already: false, message: '第三方登录需要人工验证，请点「重新登录」完成一次' }
+  }
   const proxy = await currentProxy()
   const site = (await ensureSiteProbed(hit.site.id, proxy)) ?? hit.site
+  if (opts.automatic && store.findSite(site.id)?.hidden) {
+    return { ok: true, already: true, message: '站点已隐藏，已跳过自动签到' }
+  }
   const sDeps = sessionDeps(site.id, accountId, proxy)
 
   // 手动点行内按钮是明确意图：已签也要真的执行一次（重登类站点靠登出再登领取，
@@ -1015,12 +1031,14 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC.siteUpdate, async (_e, siteId: string, patch: Partial<Site>) => {
-    return store.mutate((config) => {
+    const config = await store.mutate((config) => {
       const site = config.sites.find((s) => s.id === siteId)
       // 账号列表不允许从渲染进程整体替换，避免绕过加密与校验
       const { accounts: _ignored, ...safe } = patch
       if (site) Object.assign(site, safe)
     })
+    if (patch.hidden !== undefined) scheduler?.changed()
+    return config
   })
 
   ipcMain.handle(IPC.siteRemove, async (_e, siteId: string) => {
@@ -1114,7 +1132,8 @@ function registerIpc(): void {
                 credentialId: account.credentialId,
                 provider: account.provider,
                 label: account.label,
-                needsRelogin: false
+                needsRelogin: false,
+                autoRecoveryBlocked: false
               }
             }
           } else {
@@ -1158,6 +1177,9 @@ function registerIpc(): void {
       await ensureProviderSession(site.id, existing?.id ?? draftId, existing?.providerCookies)
       const result = await runOAuth(site, existing?.id ?? draftId, provider as never, proxy, credential)
       if (!result.ok) {
+        if (existing && result.manualRequired) {
+          await patchAccount(existing.id, { autoRecoveryBlocked: true })
+        }
         store.log('err', '授权', `${site.name}：${result.error}`, { siteId })
         return { ok: false, error: result.error } satisfies AccountResultDto
       }
@@ -1188,7 +1210,8 @@ function registerIpc(): void {
               credentialId: account.credentialId,
               provider: account.provider,
               label: account.label,
-              needsRelogin: false
+              needsRelogin: false,
+              autoRecoveryBlocked: false
             }
           }
         } else {
@@ -1326,6 +1349,14 @@ function registerIpc(): void {
             password: input.password ? input.password : existing.password,
             totpSecret: input.totpSecret ? input.totpSecret.replace(/[\s-]/g, '').toUpperCase() : existing.totpSecret
           }
+          if (input.password || input.totpSecret || input.provider !== existing.provider ||
+              username !== existing.username) {
+            for (const site of config.sites) {
+              for (const account of site.accounts) {
+                if (account.credentialId === existing.id) account.autoRecoveryBlocked = false
+              }
+            }
+          }
         } else {
           config.credentials.push({
             id: randomUUID(),
@@ -1459,7 +1490,7 @@ async function startScheduler(): Promise<void> {
   const stateStore = new ScheduleStateStore(join(app.getPath('userData'), 'schedule-state.json'))
   scheduler = new CheckinScheduler({
     settings: () => store.getSettings().schedule,
-    accounts: (now) => store.getInternal().sites.flatMap((site) =>
+    accounts: (now) => store.getInternal().sites.filter((site) => !site.hidden).flatMap((site) =>
       site.accounts.map((account) => ({
         id: account.id,
         checked: checkedInThisPeriod(account.lastCheckin, now),
@@ -1468,7 +1499,7 @@ async function startScheduler(): Promise<void> {
           : undefined
       }))
     ),
-    checkin: (id) => doCheckin(id),
+    checkin: (id) => doCheckin(id, { automatic: true }),
     save: (state) => stateStore.save(state),
     online: () => net.isOnline(),
     log: (level, message, accountId) => store.log(level, '调度', message, { accountId }),
@@ -1547,7 +1578,7 @@ async function backfillProviderSessions(): Promise<void> {
 async function backfillCheckinRewards(): Promise<void> {
   const pending = store
     .getInternal()
-    .sites.flatMap((site) =>
+    .sites.filter((site) => !site.hidden).flatMap((site) =>
       site.accounts.filter((a) => needsRewardEnrichment(a.lastCheckin, Date.now()))
     )
   if (pending.length === 0) return
@@ -1748,6 +1779,10 @@ app.whenReady().then(async () => {
     recover: (accountId) => withPartitionLock(`account-operation:${accountId}`, async () => {
       const hit = siteOf(accountId)
       if (!hit) return { ok: false, error: '账号不存在' }
+      if (hit.site.hidden) return { ok: false, error: '站点已隐藏，已跳过自动恢复' }
+      if (hit.account.autoRecoveryBlocked) {
+        return { ok: false, error: '第三方登录需要人工验证，请点「重新登录」完成一次' }
+      }
       // Manual authorization may have succeeded while this recovery waited for the lock.
       if (hit.account.needsRelogin !== true) return { ok: true }
       const proxy = await currentProxy()

@@ -40,7 +40,10 @@ class TestWindow extends EventEmitter {
   }
   isDestroyed() { return this.destroyed }
   isVisible() { return this.visible }
-  show() { this.visible = true }
+  show() {
+    this.visible = true
+    if (scenario.completeAfterHandover) setTimeout(() => this.redirect(), 10)
+  }
   destroy() {
     this.destroyed = true
     this.emit('closed')
@@ -239,6 +242,7 @@ await test('manual verification stops silent OAuth without showing a window', {
 }, (result, state) => {
   assert.equal(result.ok, false)
   assert.match(result.error, /test manual verification/)
+  assert.equal(result.manualRequired, true)
   assert.equal(state.exchanges, 0)
   assert.ok(state.windows.every((win) => !win.visible))
 })
@@ -247,9 +251,18 @@ await test('GitHub browser error ends OAuth without entering credentials or retr
 }, (result, state) => {
   assert.equal(result.ok, false)
   assert.equal(result.error, 'test provider error')
+  assert.notEqual(result.manualRequired, true, 'a transient provider error must remain retryable')
   assert.equal(state.loginCalls, 0)
   assert.equal(state.exchanges, 0)
   assert.ok(state.windows.every((win) => !win.visible))
 })
+await test('interactive GitHub browser error stays open for manual recovery', {
+  twoFactor: true, authorizeStep: 'browser-error', completeAfterHandover: true
+}, (result, state) => {
+  assert.equal(result.ok, true, result.error)
+  assert.equal(state.loginCalls, 0)
+  assert.equal(state.exchanges, 1)
+  assert.equal(state.windows[0].visible, true)
+}, true)
 delete globalThis.__oauthTestElectron
 if (failed) process.exitCode = 1

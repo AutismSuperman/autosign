@@ -217,6 +217,14 @@ export class CheckinScheduler {
         await this.deps.save(structuredClone(this.state))
         break
       }
+      const eligible = this.deps.accounts(this.now()).find((item) => item.id === account.id)
+      if (!eligible || eligible.checked ||
+          (eligible.notBefore !== undefined && eligible.notBefore > this.now())) {
+        if (entry) this.state.accounts[account.id] = entry
+        else delete this.state.accounts[account.id]
+        await this.deps.save(structuredClone(this.state))
+        continue
+      }
       this.deps.log('info', `自动签到：第 ${attempts} 次尝试`, account.id)
       attempted++
       let result: { ok: boolean; message: string }

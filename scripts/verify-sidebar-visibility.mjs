@@ -3,7 +3,7 @@
  *
  * 设计意图（v0.7.3 起）：
  *   站点行本身就是开关 —— 悬停出现眼睛图标，点一下从侧栏收起，再点恢复。
- *   收起**只影响侧栏入口**，账号、额度、签到、定时任务全部不变。
+ *   收起会暂停后台签到，账号数据保留，手动操作仍可用。
  *   因此没有「已隐藏」灰化、没有独立的「显示全部」按钮，
  *   也不存在「藏了就找不回」的死角。
  *
@@ -235,8 +235,8 @@ ck(
   (await ev(`getComputedStyle(document.querySelector('.nav-hide-toggle')).opacity`)) === '0'
 )
 ck(
-  '开关有明确的提示文案（说明只影响侧栏）',
-  (await ev(`document.querySelector('.nav-hide-toggle').title`)).includes('侧栏'),
+  '收起开关明确标明暂停自动签到',
+  (await ev(`document.querySelector('.nav-hide-toggle').title`)).includes('暂停自动签到'),
   await ev(`document.querySelector('.nav-hide-toggle').title`)
 )
 
@@ -253,13 +253,13 @@ ck(
 await ev(`[...document.querySelectorAll('.btn')].find(b=>(b.textContent||'').includes('已收起'))?.click()`)
 await sleep(700)
 ck(
-  '收起态不灰化卡片（收起≠不可用，它能正常签到）',
+  '收起态不灰化卡片，手动操作仍可用',
   (await ev(`getComputedStyle(document.querySelector('.site-card.is-sidebar-collapsed')).opacity`)) === '1',
   await ev(`getComputedStyle(document.querySelector('.site-card.is-sidebar-collapsed')).opacity`)
 )
 ck(
-  '收起态有中性「侧栏已收起」标记',
-  (await ev(`[...document.querySelectorAll('.site-tags .tag')].some(t=>t.textContent==='侧栏已收起')`)) === true
+  '收起态显示「自动签到已暂停」状态',
+  (await ev(`[...document.querySelectorAll('.site-tags .tag')].some(t=>t.textContent==='自动签到已暂停')`)) === true
 )
 // 图标语义：睁眼=显示中，闭眼=已收起。方向反了会让人反复点错。
 ck(
@@ -268,7 +268,7 @@ ck(
     const card = [...document.querySelectorAll('.site-card')].find(c =>
       c.querySelector('.site-name')?.textContent === 'GammaSite')
     const btn = card && [...card.querySelectorAll('.site-actions .icon-btn')].find(b =>
-      (b.title || '').includes('侧栏'))
+      (b.title || '').includes('恢复自动签到'))
     return !!btn && btn.classList.contains('muted')
   })()`)) === true
 )
@@ -328,7 +328,7 @@ const restored = await ev(`(() => {
     c.querySelector('.site-name')?.textContent === 'AlphaSite')
   if (!card) return 'no-card'
   const btn = [...card.querySelectorAll('.site-actions .icon-btn')].find(b =>
-    (b.title || '').includes('侧栏'))
+    (b.title || '').includes('重新显示'))
   if (!btn) return 'no-button'
   btn.click()
   return 'clicked'

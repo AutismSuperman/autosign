@@ -323,13 +323,9 @@ export function SettingsView(props: Props): React.JSX.Element {
             </span>
             <div className="field-text">
               <div className="field-label">侧栏收起</div>
-              <span className="field-hint">
-                鼠标移到侧栏的站点行上，点右侧眼睛图标即可把它从侧栏收起；
-                在「全部站点」里点同一个图标随时恢复。账号、额度与定时签到都不受影响。
-              </span>
             </div>
             <div className="field-body">
-              <span className="field-static">在侧栏逐站切换</span>
+              <span className="field-static">自动签到暂停</span>
             </div>
           </div>
           <div className="field">

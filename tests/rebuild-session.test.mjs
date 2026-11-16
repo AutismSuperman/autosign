@@ -173,6 +173,15 @@ function setup({ account, credential, silent, password }) {
 // ---- 密码账号：不该走 OAuth ----
 
 {
+  const account = { id: 'test-manual', provider: 'github' }
+  const { deps } = setup({
+    account, silent: { ok: false, manualRequired: true, error: 'test device verification' }
+  })
+  const r = await rebuildSession(site, account, deps)
+  check('OAuth 人工验证标记传递到会话重建结果', !r.ok && r.manualRequired === true)
+}
+
+{
   const account = {
     id: 'a6',
     siteId: 'agentrouter',

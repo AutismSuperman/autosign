@@ -363,7 +363,7 @@ export function SitesView(props: Props): React.JSX.Element {
 
   const siteCardClass = (site: Site): string => {
     const cls = ['site-card']
-    // 收起只影响侧栏入口：卡片保持正常外观与全部功能，仅加一道位置提示线
+    // 手动操作仍可用；收起态只暂停后台任务，保留卡片正常外观。
     if (site.hidden) cls.push('is-sidebar-collapsed')
     if (flashId === site.id) cls.push('flash')
     return cls.join(' ')
@@ -579,8 +579,7 @@ export function SitesView(props: Props): React.JSX.Element {
                   <span className="tag">{MODE_LABEL[site.mode]}</span>
                   <span className="tag">{KIND_LABEL[site.kind] ?? site.kind}</span>
                   {site.custom && <span className="tag">自定义</span>}
-                  {/* 「已收起」而不是「已隐藏」：它只影响侧栏入口，账号照常签到 */}
-                  {site.hidden && <span className="tag">侧栏已收起</span>}
+                  {site.hidden && <span className="tag">自动签到已暂停</span>}
                 </span>
               </span>
               <SiteSummary site={site} />
@@ -612,8 +611,8 @@ export function SitesView(props: Props): React.JSX.Element {
                   onClick={() => props.onUpdateSite(site.id, { hidden: !site.hidden })}
                   title={
                     site.hidden
-                      ? '当前已从侧栏收起，点击重新显示（账号与数据一直未变）'
-                      : '当前显示在侧栏，点击收起（账号、额度与签到都不受影响）'
+                      ? '重新显示并恢复自动签到（账号与数据不变）'
+                      : '收起并暂停自动签到（账号与数据不变）'
                   }
                 >
                   {site.hidden ? <EyeOff size={15} /> : <Eye size={15} />}

@@ -11,8 +11,16 @@ const root = process.cwd()
 mkdirSync(join(root, '.tmp'), { recursive: true })
 const userData = mkdtempSync(join(root, '.tmp', 'schedule-ui-'))
 let posts = 0
+let hiddenPosts = 0
 const server = http.createServer((req, res) => {
   res.setHeader('Content-Type', 'application/json')
+  if (req.url.startsWith('/hidden/')) {
+    if (req.url.startsWith('/hidden/api/user/checkin') && req.method === 'POST') hiddenPosts++
+    res.end(JSON.stringify({ success: true, data: {
+      checked_in_today: hiddenPosts > 0, quota_awarded: 500000, quota: 500000, used_quota: 0
+    } }))
+    return
+  }
   if (req.url.startsWith('/api/user/checkin') && req.method === 'POST') {
     posts++
     res.end(JSON.stringify({ success: true, data: { quota_awarded: 500000 } }))
@@ -35,6 +43,12 @@ writeFileSync(join(userData, 'config.json'), JSON.stringify({
     id: 'test-site', name: 'Test', baseUrl, mode: 'BUTTON', kind: 'NEWAPI',
     provider: 'password', turnstile: false, quotaPerUnit: 500000,
     accounts: [{ id: 'test-account', siteId: 'test-site', label: 'demo-user', provider: 'password', createdAt: 0 }]
+  }, {
+    id: 'test-hidden', name: 'Hidden test', baseUrl: `${baseUrl}/hidden`,
+    hidden: true, mode: 'BUTTON', kind: 'NEWAPI', provider: 'password',
+    turnstile: false, quotaPerUnit: 500000,
+    accounts: [{ id: 'test-hidden-account', siteId: 'test-hidden',
+      label: 'test-user', provider: 'password', createdAt: 0 }]
   }]
 }))
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -110,7 +124,9 @@ try {
   }
   assert.equal(signed, true, 'enabling schedule must catch up today')
   assert.equal(posts, 1)
+  assert.equal(hiddenPosts, 0, 'hidden site must not be scheduled')
   console.log('PASS  enabling schedule through real IPC catches up and persists a receipt')
+  console.log('PASS  hidden sites are excluded from automatic check-in')
   await evaluate(`window.api.config.updateSettings({schedule:{enabled:false,time:'00:00',weekdaysOnly:false}})`)
   await evaluate(`window.api.config.updateSettings({schedule:{enabled:true,time:'00:00',weekdaysOnly:false}})`)
   await sleep(500)
@@ -120,7 +136,12 @@ try {
   await launch()
   await sleep(1000)
   assert.equal(posts, 1, 'restart must not repeat completed account')
+  assert.equal(hiddenPosts, 0, 'restart must still exclude hidden sites')
   console.log('PASS  application restart skips today completed account')
+  await evaluate(`window.api.config.updateSite('test-hidden',{hidden:false})`)
+  for (let i = 0; i < 100 && hiddenPosts === 0; i++) await sleep(100)
+  assert.equal(hiddenPosts, 1, 'unhiding a site must replan and catch up today')
+  console.log('PASS  unhiding through IPC replans and signs in without restarting')
 } finally {
   clearTimeout(deadline)
   await close()
