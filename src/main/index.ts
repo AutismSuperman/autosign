@@ -579,16 +579,18 @@ async function doCheckinUnlocked(
 ): Promise<CheckinResultDto> {
   const hit = siteOf(accountId)
   if (!hit) return { ok: false, already: false, message: '账号不存在' }
-  if (opts.automatic && hit.site.hidden) {
-    return { ok: true, already: true, message: '站点已隐藏，已跳过自动签到' }
+  // 只有明确点击行内按钮才能操作隐藏站点；批量与定时任务都跳过。
+  const skipHidden = opts.automatic || opts.force !== true
+  if (skipHidden && hit.site.hidden) {
+    return { ok: true, already: true, message: '站点已隐藏，已跳过签到' }
   }
   if (hit.account.autoRecoveryBlocked) {
     return { ok: false, already: false, message: '第三方登录需要人工验证，请点「重新登录」完成一次' }
   }
   const proxy = await currentProxy()
   const site = (await ensureSiteProbed(hit.site.id, proxy)) ?? hit.site
-  if (opts.automatic && store.findSite(site.id)?.hidden) {
-    return { ok: true, already: true, message: '站点已隐藏，已跳过自动签到' }
+  if (skipHidden && store.findSite(site.id)?.hidden) {
+    return { ok: true, already: true, message: '站点已隐藏，已跳过签到' }
   }
   const sDeps = sessionDeps(site.id, accountId, proxy)
 
@@ -833,12 +835,14 @@ function broadcastConfigChanged(): void {
   updateTrayMenu()
 }
 
-/** 依次对全部账号执行一次签到，返回逐项结果（IPC 与托盘菜单共用）。 */
+/** 依次对未隐藏站点的账号签到，返回逐项结果（IPC 与托盘菜单共用）。 */
 async function runCheckinAll(): Promise<Array<CheckinResultDto & { accountId: string }>> {
   const config = store.getInternal()
   const out: Array<CheckinResultDto & { accountId: string }> = []
-  for (const site of config.sites) {
+  for (const site of config.sites.filter((site) => !site.hidden)) {
     for (const account of site.accounts) {
+      // 前一个账号执行期间可能收起了后续站点，按最新配置排除。
+      if (store.findSite(site.id)?.hidden) break
       const r = await doCheckin(account.id)
       out.push({ ...r, accountId: account.id })
     }
@@ -852,13 +856,15 @@ function updateTrayMenu(): void {
   const config = store.get()
   const siteCount = config.sites.length
   const accountCount = config.sites.reduce((n, s) => n + s.accounts.length, 0)
+  const checkinCount = config.sites.filter((site) => !site.hidden)
+    .reduce((n, site) => n + site.accounts.length, 0)
   tray.setToolTip(`AutoSign · ${siteCount} 站点 / ${accountCount} 账号`)
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: '打开 AutoSign', click: () => showMainWindow() },
       {
         label: '立即签到全部',
-        enabled: accountCount > 0,
+        enabled: checkinCount > 0,
         click: () => {
           void (async () => {
             const results = await runCheckinAll()

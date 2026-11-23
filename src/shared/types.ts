@@ -213,7 +213,7 @@ export interface Site {
   quotaPerUnit?: number
   /** 用户自定义站点（不在内置目录中）。 */
   custom?: boolean
-  /** 收起站点并暂停后台签到与会话恢复，账号数据保留。 */
+  /** 收起站点并排除批量、后台签到与会话恢复，账号数据保留。 */
   hidden?: boolean
   accounts: Account[]
 }

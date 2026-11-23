@@ -298,8 +298,8 @@ export function App(): React.JSX.Element {
    * 每开始一个账号就更新 busy 标记，进度自然显示在对应的账号行上。
    */
   const checkinAll = useCallback(async () => {
-    // 只处理当前选中范围内的站点（侧栏选中单站时就是那一个）
-    const targets = scopeSites.flatMap((site) =>
+    // 收起站点不参加批量签到，临时显示已收起站点也不改变签到范围。
+    const targets = scopeSites.filter((site) => !site.hidden).flatMap((site) =>
       site.accounts.map((account) => ({ siteId: site.id, siteName: site.name, account }))
     )
     if (targets.length === 0) return
